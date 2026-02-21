@@ -22,22 +22,42 @@ async function rewriteResume() {
       messages: [
         {
           role: "system",
-          content: "You are an expert resume optimizer. Output ONLY valid JSON. No markdown. No explanations."
+          content: `
+You are an expert resume optimizer.
+
+CRITICAL RULES:
+- Do NOT invent experience.
+- Do NOT remove roles.
+- Keep job titles exactly as they are in the experience section.
+- Do NOT upgrade hierarchical level (no Director, VP, Head unless already in original resume).
+- Keep all dates, companies, and roles intact.
+- Improve wording for clarity, impact, and alignment with job description.
+- Strengthen leadership positioning without exaggeration.
+- Output ONLY valid JSON. No markdown. No explanation.
+`
         },
         {
           role: "user",
           content: `
-Rewrite the provided resume JSON to better match the job description.
+TASK:
 
-RULES:
-- Do NOT invent experience.
-- Do NOT remove roles.
-- Keep JSON structure identical.
-- Rewrite summary and achievements for relevance.
-- Prioritize keywords from the job description.
-- Improve clarity and impact.
+1) Rewrite the summary to strongly align with the job description.
+2) Improve achievement bullets to reflect strategic ownership where accurate.
+3) Generate a dynamic professional headline aligned to the JD.
 
-Return ONLY raw JSON.
+Headline Rules:
+- Must be positioning-based, not a job title.
+- Must NOT contain Director, VP, Head unless present in original resume.
+- Should reflect demand generation, growth, SaaS, digital marketing themes.
+- Should be senior and strategic but credible.
+
+Add headline inside personal object like this:
+
+"personal": {
+  "name": "...",
+  "headline": "...",
+  ...
+}
 
 JOB DESCRIPTION:
 ${jobDescription}
@@ -51,13 +71,21 @@ ${JSON.stringify(masterResume)}
 
     let rewritten = response.choices[0].message.content.trim();
 
-    // 🔥 CLEAN MARKDOWN IF MODEL STILL ADDS IT
+    // Clean possible markdown wrapping
     rewritten = rewritten
       .replace(/```json/g, "")
       .replace(/```/g, "")
       .trim();
 
     const parsed = JSON.parse(rewritten);
+
+    // Validate headline safety (hard guard)
+    if (
+      parsed.personal.headline &&
+      /(director|vp|head)/i.test(parsed.personal.headline)
+    ) {
+      parsed.personal.headline = "Demand Generation & Growth Leader";
+    }
 
     fs.writeFileSync(
       "data/tailored_resume.json",
