@@ -1,1 +1,85 @@
 
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<style>
+body {
+  font-family: Arial, sans-serif;
+  margin: 40px;
+  color: #000;
+}
+
+h1 {
+  margin-bottom: 5px;
+  font-size: 28px;
+}
+
+h2 {
+  margin-top: 25px;
+  border-bottom: 1px solid #000;
+  padding-bottom: 4px;
+  font-size: 18px;
+}
+
+.header-line {
+  font-size: 13px;
+  margin-bottom: 10px;
+}
+
+.role-title {
+  font-weight: bold;
+}
+
+.company {
+  font-style: italic;
+}
+
+ul {
+  margin-top: 5px;
+}
+
+.section {
+  margin-top: 20px;
+}
+</style>
+</head>
+
+<body>
+
+<h1>{{name}}</h1>
+<div class="header-line">
+{{title}}<br>
+{{contact_line}}<br>
+LinkedIn: {{linkedin}}
+</div>
+
+<div class="section">
+<h2>SUMMARY</h2>
+<p>{{summary}}</p>
+</div>
+
+<div class="section">
+<h2>EXPERIENCE</h2>
+{{experience}}
+</div>
+
+<div class="section">
+<h2>EDUCATION</h2>
+{{education}}
+</div>
+
+<div class="section">
+<h2>SKILLS</h2>
+
+<p><strong>Marketing & Campaigns:</strong> {{skills_marketing}}</p>
+<p><strong>Tools & Platforms:</strong> {{skills_tools}}</p>
+<p><strong>Communications & Leadership:</strong> {{skills_communication}}</p>
+<p><strong>Analytics & Data:</strong> {{skills_analytics}}</p>
+<p><strong>Operations & Strategy:</strong> {{skills_operations}}</p>
+<p><strong>Languages:</strong> {{skills_languages}}</p>
+
+</div>
+
+</body>
+</html>
