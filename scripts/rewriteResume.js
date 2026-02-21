@@ -7,20 +7,26 @@ const openai = new OpenAI({
 
 async function rewriteResume() {
   try {
-    // Read master resume
     const masterResume = JSON.parse(
       fs.readFileSync("data/master_resume.json", "utf-8")
     );
 
-    // Read job description
     const jobDescription = fs.readFileSync(
       "data/job_description.txt",
       "utf-8"
     );
 
-    const prompt = `
-You are an expert resume optimizer.
-
+    const response = await openai.chat.completions.create({
+      model: "gpt-4o-mini",
+      temperature: 0.4,
+      messages: [
+        {
+          role: "system",
+          content: "You are an expert resume optimizer. Output ONLY valid JSON. No markdown. No explanations."
+        },
+        {
+          role: "user",
+          content: `
 Rewrite the provided resume JSON to better match the job description.
 
 RULES:
@@ -30,32 +36,38 @@ RULES:
 - Rewrite summary and achievements for relevance.
 - Prioritize keywords from the job description.
 - Improve clarity and impact.
-- Output valid JSON only.
+
+Return ONLY raw JSON.
 
 JOB DESCRIPTION:
 ${jobDescription}
 
 MASTER RESUME JSON:
-${JSON.stringify(masterResume, null, 2)}
-`;
-
-    const response = await openai.chat.completions.create({
-      model: "gpt-4o-mini",
-      messages: [
-        { role: "system", content: "You rewrite resumes professionally." },
-        { role: "user", content: prompt }
-      ],
-      temperature: 0.4
+${JSON.stringify(masterResume)}
+`
+        }
+      ]
     });
 
-    const rewritten = response.choices[0].message.content;
+    let rewritten = response.choices[0].message.content.trim();
 
-    // Save tailored resume
-    fs.writeFileSync("data/tailored_resume.json", rewritten);
+    // 🔥 CLEAN MARKDOWN IF MODEL STILL ADDS IT
+    rewritten = rewritten
+      .replace(/```json/g, "")
+      .replace(/```/g, "")
+      .trim();
+
+    const parsed = JSON.parse(rewritten);
+
+    fs.writeFileSync(
+      "data/tailored_resume.json",
+      JSON.stringify(parsed, null, 2)
+    );
 
     console.log("✅ Resume rewritten successfully.");
   } catch (error) {
     console.error("❌ Error rewriting resume:", error);
+    process.exit(1);
   }
 }
 
