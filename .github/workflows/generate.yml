@@ -1,14 +1,14 @@
-name: Add Test Job To Intake
+name: Score New Jobs
 
 on:
   workflow_dispatch:
 
 jobs:
-  intake:
+  scoring:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout code
+      - name: Checkout
         uses: actions/checkout@v4
 
       - name: Setup Node
@@ -19,7 +19,8 @@ jobs:
       - name: Install dependencies
         run: npm install
 
-      - name: Add Test Job
-        run: node scripts/addTestJob.js
+      - name: Score Jobs
+        run: node scripts/scoreJobs.js
         env:
           GOOGLE_SERVICE_ACCOUNT: ${{ secrets.GOOGLE_SERVICE_ACCOUNT }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
