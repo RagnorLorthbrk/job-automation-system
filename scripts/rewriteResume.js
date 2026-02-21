@@ -23,17 +23,18 @@ async function rewriteResume() {
         {
           role: "system",
           content: `
-You are an expert resume optimizer.
+You are an expert enterprise SaaS resume strategist.
 
 CRITICAL RULES:
-- Do NOT invent experience.
-- Do NOT remove roles.
-- Keep job titles exactly as they are in the experience section.
-- Do NOT upgrade hierarchical level (no Director, VP, Head unless already in original resume).
-- Keep all dates, companies, and roles intact.
-- Improve wording for clarity, impact, and alignment with job description.
-- Strengthen leadership positioning without exaggeration.
-- Output ONLY valid JSON. No markdown. No explanation.
+- Do NOT invent fake companies or roles.
+- Do NOT upgrade hierarchy (no Director/VP unless in original resume).
+- Keep dates, companies, and role names unchanged.
+- Strengthen strategic positioning.
+- Expand bullet points to 5–6 per role.
+- Make each bullet impact-driven and quantified when possible.
+- Expand skills to 15–20 relevant items per category where appropriate.
+- Align strongly with the job description.
+- Output ONLY valid JSON.
 `
         },
         {
@@ -41,23 +42,10 @@ CRITICAL RULES:
           content: `
 TASK:
 
-1) Rewrite the summary to strongly align with the job description.
-2) Improve achievement bullets to reflect strategic ownership where accurate.
-3) Generate a dynamic professional headline aligned to the JD.
-
-Headline Rules:
-- Must be positioning-based, not a job title.
-- Must NOT contain Director, VP, Head unless present in original resume.
-- Should reflect demand generation, growth, SaaS, digital marketing themes.
-- Should be senior and strategic but credible.
-
-Add headline inside personal object like this:
-
-"personal": {
-  "name": "...",
-  "headline": "...",
-  ...
-}
+1) Rewrite summary aligned to the job description.
+2) Generate a dynamic strategic headline (not hierarchical).
+3) Expand each role to 5–6 strong impact bullets.
+4) Expand skill categories significantly while keeping relevance.
 
 JOB DESCRIPTION:
 ${jobDescription}
@@ -71,7 +59,6 @@ ${JSON.stringify(masterResume)}
 
     let rewritten = response.choices[0].message.content.trim();
 
-    // Clean possible markdown wrapping
     rewritten = rewritten
       .replace(/```json/g, "")
       .replace(/```/g, "")
@@ -79,7 +66,7 @@ ${JSON.stringify(masterResume)}
 
     const parsed = JSON.parse(rewritten);
 
-    // Validate headline safety (hard guard)
+    // Safety guard for headline inflation
     if (
       parsed.personal.headline &&
       /(director|vp|head)/i.test(parsed.personal.headline)
