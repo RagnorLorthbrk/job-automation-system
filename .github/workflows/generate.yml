@@ -1,1 +1,27 @@
 
+name: Generate Resume
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v3
+
+      - uses: actions/setup-node@v3
+        with:
+          node-version: 18
+
+      - run: npm install
+      - run: npx playwright install --with-deps
+      - run: node scripts/generateResume.js
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+
+      - uses: actions/upload-artifact@v3
+        with:
+          name: resume-output
+          path: output/
