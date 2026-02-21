@@ -8,33 +8,33 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # 1️⃣ Checkout repository
+      # Checkout repository
       - name: Checkout code
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
-      # 2️⃣ Setup Node
+      # Setup Node
       - name: Setup Node
-        uses: actions/setup-node@v3
+        uses: actions/setup-node@v4
         with:
           node-version: 18
 
-      # 3️⃣ Install dependencies
+      # Install dependencies
       - name: Install dependencies
         run: npm install
 
-      # 4️⃣ Install Playwright browsers
+      # Install Playwright browsers
       - name: Install Playwright
         run: npx playwright install --with-deps
 
-      # 5️⃣ Run full resume pipeline
+      # Run full resume pipeline
       - name: Generate Resume
         run: node scripts/generateResume.js
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
 
-      # 6️⃣ Upload generated files
+      # Upload output folder
       - name: Upload Output
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: resume-output
           path: output/
