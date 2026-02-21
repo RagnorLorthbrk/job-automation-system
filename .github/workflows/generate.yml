@@ -1,29 +1,25 @@
-name: Test Google Sheets Connection
+name: Add Test Job To Intake
 
 on:
   workflow_dispatch:
 
 jobs:
-  test-sheets:
+  intake:
     runs-on: ubuntu-latest
 
     steps:
-      # 1️⃣ Checkout repository
       - name: Checkout code
         uses: actions/checkout@v4
 
-      # 2️⃣ Setup Node
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
           node-version: 18
 
-      # 3️⃣ Install dependencies
       - name: Install dependencies
         run: npm install
 
-      # 4️⃣ Run Google Sheets test
-      - name: Test Google Sheets
-        run: node scripts/testSheets.js
+      - name: Add Test Job
+        run: node scripts/addTestJob.js
         env:
           GOOGLE_SERVICE_ACCOUNT: ${{ secrets.GOOGLE_SERVICE_ACCOUNT }}
