@@ -11,7 +11,7 @@ async function testSheets() {
 
     const sheets = google.sheets({ version: "v4", auth });
 
-    const spreadsheetId = "PASTE_YOUR_SHEET_ID_HERE";
+    const spreadsheetId = "1VLZUQJh-lbzA2K4TtSQALgqgwWmnGmSHngKYQubG7Ng";
 
     const response = await sheets.spreadsheets.values.append({
       spreadsheetId,
