@@ -7,7 +7,7 @@ function formatExperience(experienceArray) {
       .join("");
 
     return `
-      <div>
+      <div class="experience-block">
         <p class="role-title">${exp.role}</p>
         <p class="company">${exp.company} | ${exp.location} | ${exp.start} - ${exp.end}</p>
         <ul>${achievements}</ul>
@@ -29,14 +29,15 @@ function renderResume() {
   const data = JSON.parse(fs.readFileSync("data/tailored_resume.json", "utf-8"));
 
   const contactLine = `
-${data.personal.phone} ◇ ${data.personal.email} ◇ ${data.personal.location} ◇ ${data.personal.work_preferences.join(" ◇ ")}
-  `;
+${data.personal.phone} | ${data.personal.email} | ${data.personal.location}
+${data.personal.work_preferences.join(" | ")}
+`;
 
   let html = template
     .replace("{{name}}", data.personal.name)
-    .replace("{{title}}", data.personal.title)
+    .replace("{{headline}}", data.personal.headline)
     .replace("{{contact_line}}", contactLine)
-    .replace("{{linkedin}}", data.personal.linkedin)
+    .replace("{{linkedin_url}}", data.personal.linkedin)
     .replace("{{summary}}", data.summary)
     .replace("{{experience}}", formatExperience(data.experience))
     .replace("{{education}}", formatEducation(data.education))
