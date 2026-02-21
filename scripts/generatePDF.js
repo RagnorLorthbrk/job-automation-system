@@ -11,7 +11,13 @@ async function generatePDF() {
   await page.pdf({
     path: "output/resume_output.pdf",
     format: "A4",
-    printBackground: true
+    printBackground: true,
+    margin: {
+      top: "40px",
+      bottom: "40px",
+      left: "40px",
+      right: "40px"
+    }
   });
 
   await browser.close();
