@@ -1,40 +1,29 @@
-name: Generate Resume
+name: Test Google Sheets Connection
 
 on:
   workflow_dispatch:
 
 jobs:
-  build:
+  test-sheets:
     runs-on: ubuntu-latest
 
     steps:
-      # Checkout repository
+      # 1️⃣ Checkout repository
       - name: Checkout code
         uses: actions/checkout@v4
 
-      # Setup Node
+      # 2️⃣ Setup Node
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
           node-version: 18
 
-      # Install dependencies
+      # 3️⃣ Install dependencies
       - name: Install dependencies
         run: npm install
 
-      # Install Playwright browsers
-      - name: Install Playwright
-        run: npx playwright install --with-deps
-
-      # Run full resume pipeline
-      - name: Generate Resume
-        run: node scripts/generateResume.js
+      # 4️⃣ Run Google Sheets test
+      - name: Test Google Sheets
+        run: node scripts/testSheets.js
         env:
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-
-      # Upload output folder
-      - name: Upload Output
-        uses: actions/upload-artifact@v4
-        with:
-          name: resume-output
-          path: output/
+          GOOGLE_SERVICE_ACCOUNT: ${{ secrets.GOOGLE_SERVICE_ACCOUNT }}
