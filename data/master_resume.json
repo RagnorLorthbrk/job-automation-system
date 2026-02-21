@@ -1,1 +1,139 @@
+{
+  "personal": {
+    "name": "Manoj Kumar",
+    "title": "Digital Marketing Expert",
+    "phone": "+918700323844",
+    "email": "macheerielts@gmail.com",
+    "location": "New Delhi, India",
+    "work_preferences": [
+      "Open to Remote",
+      "Open to Relocate",
+      "Open to Hybrid",
+      "Open to Travel",
+      "Open to On-Site"
+    ],
+    "linkedin": "LinkedIn URL Here"
+  },
 
+  "summary": "Digital Marketing Strategist with 10+ years leading B2B, eCommerce, programmatic, and performance marketing initiatives across global markets. Proven ability to scale ROI-driven campaigns, lead cross-functional teams, and implement marketing automation systems that improve efficiency and revenue. Skilled in ABM, paid media, and CRM-driven communication strategies.",
+
+  "experience": [
+    {
+      "role": "Program Manager",
+      "company": "Denave India",
+      "location": "Delhi, India",
+      "start": "Dec 2023",
+      "end": "Oct 2024",
+      "achievements": [
+        "Oversaw multi-channel digital marketing programs for enterprise clients.",
+        "Led cross-functional teams across paid media, email automation, and ABM.",
+        "Increased ROI by 20% through optimized eCommerce paid strategies.",
+        "Managed CRM automation workflows using Eloqua.",
+        "Improved client engagement by 15% through strategic ABM initiatives."
+      ]
+    },
+    {
+      "role": "Programmatic Specialist",
+      "company": "Ethnique Media",
+      "location": "Montreal, Canada",
+      "start": "Nov 2022",
+      "end": "Dec 2023",
+      "achievements": [
+        "Managed full programmatic lifecycle from planning to optimization.",
+        "Improved budget utilization by 25% via SEM audits.",
+        "Increased ad performance by 30% using audience insights.",
+        "Led media buying and cross-channel reporting."
+      ]
+    },
+    {
+      "role": "Account Manager",
+      "company": "Paragon Digital Service Pvt Ltd",
+      "location": "New Delhi, India",
+      "start": "Mar 2021",
+      "end": "Oct 2022",
+      "achievements": [
+        "Managed multiple digital accounts across eCommerce channels.",
+        "Improved campaign performance by 20% via reporting optimization.",
+        "Increased client satisfaction by 10% through strategy alignment."
+      ]
+    },
+    {
+      "role": "Team Lead - Digital Marketing",
+      "company": "Virtual Employees Pvt Ltd",
+      "location": "Delhi, India",
+      "start": "Oct 2018",
+      "end": "Feb 2021",
+      "achievements": [
+        "Led cross-functional marketing team for global clients.",
+        "Increased lead conversions by 25% through automation workflows.",
+        "Managed programmatic media buying and reporting."
+      ]
+    },
+    {
+      "role": "Subject Matter Expert - Online Marketing",
+      "company": "LBF Travel Pvt Ltd",
+      "location": "New Delhi, India",
+      "start": "May 2015",
+      "end": "Jul 2018",
+      "achievements": [
+        "Managed Google Ads and affiliate marketing campaigns.",
+        "Increased affiliate revenue by 20%.",
+        "Improved campaign performance via bid and keyword optimization."
+      ]
+    }
+  ],
+
+  "education": [
+    {
+      "degree": "Master of Business Administration",
+      "institution": "BCIPS (GGSIPU)",
+      "location": "Delhi, India",
+      "year": "2013"
+    },
+    {
+      "degree": "Bachelor of Business Administration",
+      "institution": "JIMS (GGSIPU)",
+      "location": "New Delhi, India",
+      "year": ""
+    }
+  ],
+
+  "skills": {
+    "marketing": [
+      "SEM",
+      "ABM",
+      "Lead Generation",
+      "Email Marketing",
+      "Retargeting",
+      "Copywriting",
+      "SaaS Marketing"
+    ],
+    "tools": [
+      "Salesforce",
+      "Eloqua",
+      "Marketo",
+      "CRM",
+      "Google Ads",
+      "Facebook Ads"
+    ],
+    "communication": [
+      "Leadership",
+      "Client Relationship Building",
+      "Coaching",
+      "Strategic Communication"
+    ],
+    "analytics": [
+      "Data Analytics",
+      "Performance Reporting",
+      "Marketing Analytics"
+    ],
+    "operations": [
+      "Project Management",
+      "Budget Management",
+      "Strategy Development"
+    ],
+    "languages": [
+      "English"
+    ]
+  }
+}
