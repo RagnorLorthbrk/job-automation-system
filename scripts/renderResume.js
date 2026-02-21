@@ -28,16 +28,29 @@ function renderResume() {
   const template = fs.readFileSync("templates/resume_template.html", "utf-8");
   const data = JSON.parse(fs.readFileSync("data/tailored_resume.json", "utf-8"));
 
+  // Safe headline fallback
+  const headline =
+    data.personal.headline ||
+    data.personal.title ||
+    "";
+
+  // Clean contact line (NO diamonds)
   const contactLine = `
 ${data.personal.phone} | ${data.personal.email} | ${data.personal.location}
 ${data.personal.work_preferences.join(" | ")}
 `;
 
+  // Ensure LinkedIn has https
+  const linkedinURL =
+    data.personal.linkedin.startsWith("http")
+      ? data.personal.linkedin
+      : "https://" + data.personal.linkedin;
+
   let html = template
     .replace("{{name}}", data.personal.name)
-    .replace("{{headline}}", data.personal.headline)
+    .replace("{{headline}}", headline)
     .replace("{{contact_line}}", contactLine)
-    .replace("{{linkedin_url}}", data.personal.linkedin)
+    .replace("{{linkedin_url}}", linkedinURL)
     .replace("{{summary}}", data.summary)
     .replace("{{experience}}", formatExperience(data.experience))
     .replace("{{education}}", formatEducation(data.education))
