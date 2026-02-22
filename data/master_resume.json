@@ -8,19 +8,24 @@
     "linkedin": "https://linkedin.com/in/macheer/"
   },
 
-  "core_positioning": {
-    "primary_focus": [
-      "Enterprise SaaS Demand Generation",
-      "B2B Funnel Strategy & Attribution",
-      "ABM & CRM Automation Leadership",
-      "Performance Marketing at Scale"
-    ]
-  },
+  "summary_master": "Enterprise B2B SaaS marketing leader with 10+ years of experience driving demand generation, ABM strategy, and full-funnel growth across APAC and North America. Proven success delivering multi-channel programs for enterprise technology brands. Expert in aligning paid media, CRM automation, and sales enablement to accelerate MQL-to-SQL velocity and scale revenue impact.",
 
-  "summary_master": "Enterprise B2B SaaS marketing leader with 10+ years of experience driving demand generation, ABM strategy, and full-funnel growth across APAC, North America, and India. Proven success delivering multi-channel programs for enterprise technology brands including Dell and Salesforce ISV partners. Expert in aligning paid media, CRM automation, and sales enablement to accelerate MQL-to-SQL velocity, improve attribution clarity, and scale revenue impact. Strong operator with experience managing cross-functional teams, enterprise budgets, and multi-market campaigns.",
+  "education": [
+    {
+      "degree": "Master of Business Administration",
+      "institution": "BCIPS (GGSIPU)",
+      "location": "Delhi, India",
+      "year": "2013"
+    },
+    {
+      "degree": "Bachelor of Business Administration",
+      "institution": "JIMS (GGSIPU)",
+      "location": "New Delhi, India",
+      "year": "2011"
+    }
+  ],
 
   "experience": [
-
     {
       "role": "Program Manager – Enterprise Demand Generation",
       "company": "Denave India",
@@ -28,15 +33,10 @@
       "start": "Dec 2023",
       "end": "Oct 2024",
       "high_impact_achievements": [
-        "Led enterprise B2B demand generation programs across paid media, ABM, and CRM automation for global technology clients.",
-        "Managed cross-functional teams across paid search, LinkedIn Ads, email automation, and analytics to drive pipeline acceleration.",
-        "Executed ABM campaigns aligned to sales segments, increasing client engagement by 15%.",
-        "Improved ROI by 20% through performance optimization and attribution modeling.",
-        "Supervised Eloqua-based nurture workflows improving MQL-to-SQL velocity.",
-        "Managed enterprise budgets with structured pacing, forecasting, and ROI analysis."
+        "Led enterprise B2B demand generation programs across paid media, ABM, and CRM automation.",
+        "Improved ROI through performance optimization and attribution modeling."
       ]
     },
-
     {
       "role": "Programmatic & Performance Specialist – B2B SaaS",
       "company": "Ethnique Media",
@@ -44,29 +44,21 @@
       "start": "Nov 2022",
       "end": "Dec 2023",
       "high_impact_achievements": [
-        "Managed full programmatic lifecycle including planning, media buying, optimization, and reporting.",
-        "Improved budget utilization by 25% through SEM audits and funnel restructuring.",
-        "Increased ad performance by 30% via advanced audience targeting and segmentation.",
-        "Delivered cross-channel attribution insights to support enterprise clients.",
-        "Supported SaaS lead generation initiatives across North American markets."
+        "Managed full programmatic lifecycle including planning and optimization.",
+        "Improved budget utilization and funnel performance."
       ]
     },
-
     {
-      "role": "Account Manager – Digital Performance & SaaS Growth",
+      "role": "Account Manager – Digital Performance",
       "company": "Paragon Digital (Dentsu)",
       "location": "New Delhi, India",
       "start": "Mar 2021",
       "end": "Oct 2022",
       "high_impact_achievements": [
-        "Managed enterprise-level digital accounts including SaaS and technology brands.",
-        "Improved campaign performance by 20% through advanced reporting frameworks.",
-        "Executed budget pacing and forecasting strategies aligned with revenue targets.",
-        "Integrated CRM insights into paid media strategy to improve lead quality.",
-        "Led performance reviews and executive reporting for key accounts."
+        "Managed enterprise-level SaaS digital accounts.",
+        "Improved campaign performance via structured reporting frameworks."
       ]
     },
-
     {
       "role": "Team Lead – Digital Marketing & Automation",
       "company": "Virtual Employees Pvt Ltd",
@@ -75,94 +67,77 @@
       "end": "Feb 2021",
       "high_impact_achievements": [
         "Led cross-functional marketing team delivering global B2B campaigns.",
-        "Increased lead conversions by 25% through automation workflows.",
-        "Managed programmatic media buying and data-driven optimization.",
-        "Built automated nurture sequences improving pipeline efficiency.",
-        "Trained and mentored team members on ABM and SaaS marketing practices."
+        "Built automation workflows improving pipeline efficiency."
       ]
     },
-
     {
-      "role": "Subject Matter Expert – Performance & eCommerce Marketing",
+      "role": "Subject Matter Expert – Performance Marketing",
       "company": "LBF Travel Pvt Ltd",
       "location": "New Delhi, India",
       "start": "May 2015",
       "end": "Jul 2018",
       "high_impact_achievements": [
-        "Managed Google Ads and affiliate programs driving 20% revenue growth.",
-        "Executed advanced bid strategies and keyword optimization.",
-        "Improved quality score and conversion efficiency.",
-        "Conducted market research and competitive analysis.",
-        "Built email campaigns with segmentation and compliance frameworks."
-      ]
-    }
-  ],
-
-  "enterprise_case_studies": [
-    {
-      "client": "Dell APAC (Channel Partner)",
-      "highlights": [
-        "Generated 2,100+ MQLs across APAC markets.",
-        "Reduced CPL by 41%.",
-        "Achieved 27% lead-to-opportunity conversion.",
-        "Executed geo-targeted campaigns for CIO and IT decision-makers."
-      ]
-    },
-    {
-      "client": "Salesforce ISV Partner",
-      "highlights": [
-        "Increased demo bookings by 3.5x.",
-        "Reduced CPL from $98 to $54.",
-        "Improved SQL velocity through CRM workflow optimization.",
-        "Executed LinkedIn ABM using matched audiences."
+        "Managed Google Ads and affiliate programs.",
+        "Improved conversion efficiency through bid strategy optimization."
       ]
     }
   ],
 
   "skills": {
-    "demand_generation": [
+    "marketing_campaigns": [
       "Enterprise SaaS Marketing",
       "Account-Based Marketing (ABM)",
       "B2B Lead Generation",
+      "E-comm ROAS And CAC",
       "Funnel Strategy",
       "Pipeline Acceleration",
       "Attribution Modeling",
-      "MQL to SQL Optimization",
-      "CRM Integration",
       "Marketing Automation",
       "Performance Marketing",
+      "Meta Ads",
+      "SnapChat, Pinterest, Tiktok, Reddit Ads",
       "LinkedIn Ads",
-      "Google Ads",
-      "Programmatic Buying",
-      "Landing Page Optimization",
-      "Nurture Sequences",
-      "Audience Segmentation",
-      "Conversion Rate Optimization",
-      "Paid Media Strategy"
+      "Google Ads"
     ],
     "tools_platforms": [
       "Salesforce",
-      "Eloqua",
+      "Klaviyo",
+      "ZOHO",
       "HubSpot",
       "Marketo",
-      "Google Ads",
       "DV360",
-      "Google Ad Manager",
-      "LinkedIn Campaign Manager",
       "Google Analytics",
-      "Data Studio",
-      "CRM Systems",
-      "Email Service Providers"
+      "SuperMatrics",
+      "Looker Studio",
+      "LinkedIn Campaign Manager"
     ],
-    "leadership_operations": [
+    "communications_leadership": [
       "Cross-Functional Team Leadership",
       "Budget Forecasting",
       "Revenue Reporting",
       "Stakeholder Management",
       "Client Strategy Consulting",
-      "Performance Audits",
+      "Team Development"
+    ],
+    "analytics_data": [
+      "Marketing Analytics",
+      "Cohort Analysis",
+      "KPI Development",
+      "Dashboard Creation",
+      "A/B Testing",
+      "ROI Analysis"
+    ],
+    "operations_strategy": [
+      "Strategic Planning",
+      "Budget Management",
+      "Forecasting",
       "Process Optimization",
-      "Multi-Market Campaign Management"
+      "Vendor Management"
+    ],
+    "languages": [
+      "English",
+      "Punjabi",
+      "Hindi"
     ]
   }
 }
