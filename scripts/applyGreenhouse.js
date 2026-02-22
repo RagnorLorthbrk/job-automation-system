@@ -26,7 +26,6 @@ async function getSheetsClient() {
   return google.sheets({ version: "v4", auth });
 }
 
-// ---------- Smart Field Filler ----------
 async function fillField(page, selectors, value) {
   for (const selector of selectors) {
     const el = page.locator(selector);
@@ -38,14 +37,12 @@ async function fillField(page, selectors, value) {
   return false;
 }
 
-// ---------- Greenhouse Apply ----------
 async function applyToGreenhouse(page, jobUrl, resumePath) {
   console.log("Opening:", jobUrl);
 
   await page.goto(jobUrl, { waitUntil: "domcontentloaded" });
   await page.waitForTimeout(2000);
 
-  // Click Apply button if present
   const applyButton = page.locator('text=Apply');
   if (await applyButton.count()) {
     await applyButton.first().click();
@@ -78,20 +75,17 @@ async function applyToGreenhouse(page, jobUrl, resumePath) {
     'input[name="job_application[phone]"]'
   ], PHONE);
 
-  // Resume Upload
   const resumeInput = page.locator('input[type="file"]');
   if (await resumeInput.count()) {
     console.log("Uploading resume...");
     await resumeInput.first().setInputFiles(resumePath);
   }
 
-  // LinkedIn
   await fillField(page, [
     'input[name*="linkedin"]',
     'input[id*="linkedin"]'
   ], LINKEDIN);
 
-  // Auto-select dropdowns
   const selects = page.locator("select");
   const selectCount = await selects.count();
 
@@ -104,7 +98,6 @@ async function applyToGreenhouse(page, jobUrl, resumePath) {
     }
   }
 
-  // Check checkboxes
   const checkboxes = page.locator('input[type="checkbox"]');
   const cbCount = await checkboxes.count();
   for (let i = 0; i < cbCount; i++) {
@@ -116,7 +109,6 @@ async function applyToGreenhouse(page, jobUrl, resumePath) {
 
   await page.waitForTimeout(1500);
 
-  // Submit
   const submitBtn = page.locator('button[type="submit"]');
   if (await submitBtn.count()) {
     console.log("Submitting application...");
@@ -126,7 +118,6 @@ async function applyToGreenhouse(page, jobUrl, resumePath) {
   await page.waitForTimeout(4000);
 }
 
-// ---------- Main Runner ----------
 async function run() {
   const sheets = await getSheetsClient();
 
@@ -192,7 +183,8 @@ async function run() {
 
     if (applicationStatus !== "PENDING") continue;
 
-    const resumePath = `output/resume_${jobId}.pdf`;
+    // 🔥 FIXED PATH HERE
+    const resumePath = `resume_${jobId}.pdf`;
 
     console.log(`Applying to ${company} - ${role}`);
 
@@ -219,17 +211,6 @@ async function run() {
               ""
             ]]
           }
-        });
-      } else {
-        const rowNumber = appIndex + 2;
-
-        await sheets.spreadsheets.values.update({
-          spreadsheetId,
-          range: `Applications!G${rowNumber}`,
-          valueInputOption: "USER_ENTERED",
-          requestBody: {
-            values: [["SUBMITTED"]],
-          },
         });
       }
 
