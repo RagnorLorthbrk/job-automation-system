@@ -26,34 +26,72 @@ async function getSheetsClient() {
   return google.sheets({ version: "v4", auth });
 }
 
-async function applyToGreenhouse(page, jobUrl, resumePath) {
-  await page.goto(jobUrl, { waitUntil: "domcontentloaded" });
-
-  const applyButton = page.locator("text=Apply for this job");
-  if (await applyButton.count()) {
-    await applyButton.first().click();
+// ---------- Smart Field Filler ----------
+async function fillField(page, selectors, value) {
+  for (const selector of selectors) {
+    const el = page.locator(selector);
+    if (await el.count()) {
+      await el.first().fill(value);
+      return true;
+    }
   }
+  return false;
+}
 
+// ---------- Greenhouse Apply ----------
+async function applyToGreenhouse(page, jobUrl, resumePath) {
+  console.log("Opening:", jobUrl);
+
+  await page.goto(jobUrl, { waitUntil: "domcontentloaded" });
   await page.waitForTimeout(2000);
 
-  await page.fill('input[name="first_name"]', FIRST_NAME);
-  await page.fill('input[name="last_name"]', LAST_NAME);
-  await page.fill('input[name="email"]', EMAIL);
-
-  if (await page.locator('input[name="phone"]').count()) {
-    await page.fill('input[name="phone"]', PHONE);
+  // Click Apply button if present
+  const applyButton = page.locator('text=Apply');
+  if (await applyButton.count()) {
+    await applyButton.first().click();
+    await page.waitForTimeout(2000);
   }
 
+  console.log("Filling basic fields...");
+
+  await fillField(page, [
+    'input[name="first_name"]',
+    'input[id="first_name"]',
+    'input[name="job_application[first_name]"]'
+  ], FIRST_NAME);
+
+  await fillField(page, [
+    'input[name="last_name"]',
+    'input[id="last_name"]',
+    'input[name="job_application[last_name]"]'
+  ], LAST_NAME);
+
+  await fillField(page, [
+    'input[name="email"]',
+    'input[id="email"]',
+    'input[name="job_application[email]"]'
+  ], EMAIL);
+
+  await fillField(page, [
+    'input[name="phone"]',
+    'input[id="phone"]',
+    'input[name="job_application[phone]"]'
+  ], PHONE);
+
+  // Resume Upload
   const resumeInput = page.locator('input[type="file"]');
   if (await resumeInput.count()) {
-    await resumeInput.setInputFiles(resumePath);
+    console.log("Uploading resume...");
+    await resumeInput.first().setInputFiles(resumePath);
   }
 
-  const linkedinInput = page.locator('input[name*="linkedin"]');
-  if (await linkedinInput.count()) {
-    await linkedinInput.fill(LINKEDIN);
-  }
+  // LinkedIn
+  await fillField(page, [
+    'input[name*="linkedin"]',
+    'input[id*="linkedin"]'
+  ], LINKEDIN);
 
+  // Auto-select dropdowns
   const selects = page.locator("select");
   const selectCount = await selects.count();
 
@@ -66,6 +104,7 @@ async function applyToGreenhouse(page, jobUrl, resumePath) {
     }
   }
 
+  // Check checkboxes
   const checkboxes = page.locator('input[type="checkbox"]');
   const cbCount = await checkboxes.count();
   for (let i = 0; i < cbCount; i++) {
@@ -77,14 +116,17 @@ async function applyToGreenhouse(page, jobUrl, resumePath) {
 
   await page.waitForTimeout(1500);
 
+  // Submit
   const submitBtn = page.locator('button[type="submit"]');
   if (await submitBtn.count()) {
+    console.log("Submitting application...");
     await submitBtn.first().click();
   }
 
-  await page.waitForTimeout(3000);
+  await page.waitForTimeout(4000);
 }
 
+// ---------- Main Runner ----------
 async function run() {
   const sheets = await getSheetsClient();
 
