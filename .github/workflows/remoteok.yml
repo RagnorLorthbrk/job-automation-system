@@ -1,14 +1,16 @@
-name: Fetch RemoteOK Jobs
+name: Fetch RemoteOK Jobs (AI Filtered)
 
 on:
   workflow_dispatch:
+  schedule:
+    - cron: "0 6 * * *"   # runs daily at 6 AM UTC
 
 jobs:
   remoteok:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout repo
+      - name: Checkout Repository
         uses: actions/checkout@v4
 
       - name: Setup Node
@@ -16,10 +18,11 @@ jobs:
         with:
           node-version: 18
 
-      - name: Install dependencies
+      - name: Install Dependencies
         run: npm install
 
-      - name: Run RemoteOK script
+      - name: Run RemoteOK AI Intake
         run: node scripts/runRemoteOK.js
         env:
           GOOGLE_SERVICE_ACCOUNT: ${{ secrets.GOOGLE_SERVICE_ACCOUNT }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
