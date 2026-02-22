@@ -20,17 +20,18 @@ async function rewriteResume() {
         {
           role: "system",
           content: `
-You are an expert enterprise SaaS resume strategist.
+You are a senior global digital marketing resume strategist.
 
 Rules:
 - Do NOT change company, location, start, end, or education.
-- Deeply enhance summary.
+- Deeply enhance summary aligned to the job.
 - Rewrite ALL high_impact_achievements per role.
-- Each role must have 5–8 bullets.
-- Bullets must be strong, impact-driven, and quantified (%, $, X growth where logical).
-- Bullets must be medium length (not 1 line, not paragraphs).
+- Each role must have 5–8 strong bullets.
+- Bullets must be quantified and impact-driven (%, $, growth, ROI).
+- Bullets must be medium-length (not 1 line, not paragraphs).
 - Expand skills per section to 12–20 relevant items aligned to JD.
-- Keep language executive and data-backed.
+- Preserve B2B + B2C positioning.
+- Industry mismatch alone must NOT reduce emphasis.
 Return FULL resume JSON preserving structure.
 `
         },
@@ -54,7 +55,6 @@ ${JSON.stringify(master)}
 
     const enhanced = JSON.parse(content);
 
-    // Lock structural fields
     enhanced.education = master.education;
 
     enhanced.experience = enhanced.experience.map((exp, index) => ({
