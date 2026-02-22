@@ -2,13 +2,19 @@ name: Score New Jobs
 
 on:
   workflow_dispatch:
+  schedule:
+    - cron: "0 */6 * * *"   # Runs every 6 hours (UTC)
+
+concurrency:
+  group: scoring-jobs
+  cancel-in-progress: false
 
 jobs:
   scoring:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout
+      - name: Checkout Repository
         uses: actions/checkout@v4
 
       - name: Setup Node
@@ -16,10 +22,10 @@ jobs:
         with:
           node-version: 18
 
-      - name: Install dependencies
+      - name: Install Dependencies
         run: npm install
 
-      - name: Score Jobs
+      - name: Run Scoring Script
         run: node scripts/scoreJobs.js
         env:
           GOOGLE_SERVICE_ACCOUNT: ${{ secrets.GOOGLE_SERVICE_ACCOUNT }}
