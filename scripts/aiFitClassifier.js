@@ -40,9 +40,7 @@ Specializations:
 
 CRITICAL SCORING RULES:
 
-1) Only roles with DIRECT ownership of digital marketing strategy,
-paid acquisition, CRM systems, lifecycle marketing, demand generation,
-digital growth, or performance marketing can score above 70.
+1) Only roles with DIRECT ownership of digital marketing strategy, paid acquisition (including paid social), CRM systems, Email marketing, Affiliate Marketing, Google Ads, Search Paid Ads, Payperclick, Reddit ads, Instagram ads, Facebook ads, Tiktok ads, Pinterest ads, lifecycle marketing, demand generation, growth strategy, OR performance-driven social media leadership can score above 70.
 
 2) The following roles MUST score BELOW 10:
 - Engineering
