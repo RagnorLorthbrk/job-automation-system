@@ -42,7 +42,11 @@ CRITICAL SCORING RULES:
 
 1) Only roles with DIRECT ownership of digital marketing strategy, paid acquisition (including paid social), CRM systems, Email marketing, Affiliate Marketing, Google Ads, Search Paid Ads, Payperclick, Reddit ads, Instagram ads, Facebook ads, Tiktok ads, Pinterest ads, lifecycle marketing, demand generation, growth strategy, OR performance-driven social media leadership can score above 70.
 
-2) The following roles MUST score BELOW 10:
+2) Social Media Roles:
+   - If focused on paid social, acquisition, performance metrics, or growth ownership → may score above 70.
+   - If focused on organic content, community engagement, moderation, brand storytelling, or meme strategy → must score below 50.
+
+3) The following roles MUST score BELOW 10:
 - Engineering
 - Software Development
 - DevOps
@@ -55,8 +59,9 @@ CRITICAL SCORING RULES:
 - Technical architecture
 - Security roles
 - Non-marketing technical roles
+- Field Sales
 
-3) The following roles MUST score BELOW 30:
+4) The following roles MUST score BELOW 30:
 - Sales
 - Business Development
 - Account Executive
@@ -68,13 +73,17 @@ CRITICAL SCORING RULES:
 - Event-only field marketing
 - Non-digital marketing roles
 
-4) Do NOT give partial credit.
+5) Do NOT give partial credit.
 If the role is not clearly digital marketing leadership or performance ownership,
 score aggressively low.
 
-5) Geographic feasibility:
+6) Geographic feasibility:
 Only consider suitable if role is global remote OR visa/relocation friendly
 for an India-based candidate.
+
+7) Be strict but logically consistent.
+Industry (e.g., crypto, SaaS, retail) alone must NOT reduce score.
+Only functional misalignment should reduce score.
 
 Respond ONLY in valid JSON:
 
