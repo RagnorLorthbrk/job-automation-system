@@ -1,36 +1,42 @@
-name: Apply to Greenhouse Jobs
+name: Full Job Automation Pipeline
 
 on:
   workflow_dispatch:
 
 jobs:
-  apply:
+  automate:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout repository
+      - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Setup Node.js
+      - name: Setup Node
         uses: actions/setup-node@v4
         with:
           node-version: 18
 
-      - name: Install dependencies
+      - name: Install Dependencies
         run: npm install
 
-      # 🔥 Install Playwright browsers
       - name: Install Playwright Browsers
         run: npx playwright install --with-deps
 
-      # Step 1: Generate resumes
+      # 🔹 STEP 1: Score Jobs
+      - name: Score Jobs
+        run: node scripts/scoreJobs.js
+        env:
+          GOOGLE_SERVICE_ACCOUNT: ${{ secrets.GOOGLE_SERVICE_ACCOUNT }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+
+      # 🔹 STEP 2: Generate Resumes
       - name: Generate Resumes For Approved Jobs
         run: node scripts/generateForApprovedJobs.js
         env:
           GOOGLE_SERVICE_ACCOUNT: ${{ secrets.GOOGLE_SERVICE_ACCOUNT }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
 
-      # Step 2: Apply to Greenhouse
+      # 🔹 STEP 3: Apply to Greenhouse
       - name: Apply to Greenhouse Jobs
         run: node scripts/applyGreenhouse.js
         env:
