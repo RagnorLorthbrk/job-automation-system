@@ -49,8 +49,6 @@ async function applyToGreenhouse(page, jobUrl, resumePath) {
     await page.waitForTimeout(2000);
   }
 
-  console.log("Filling form...");
-
   await fillField(page, [
     'input[name="first_name"]',
     'input[id="first_name"]',
@@ -77,8 +75,7 @@ async function applyToGreenhouse(page, jobUrl, resumePath) {
 
   const resumeInput = page.locator('input[type="file"]');
   if (await resumeInput.count()) {
-    console.log("Uploading resume...");
-    await resumeInput.first().setInputFiles(resumePath);
+    await resumeInput.first().setInputFiles("output/resume_output.pdf");
   }
 
   await fillField(page, [
@@ -86,32 +83,8 @@ async function applyToGreenhouse(page, jobUrl, resumePath) {
     'input[id*="linkedin"]'
   ], LINKEDIN);
 
-  const selects = page.locator("select");
-  const selectCount = await selects.count();
-
-  for (let i = 0; i < selectCount; i++) {
-    const select = selects.nth(i);
-    const options = await select.locator("option").all();
-    if (options.length > 1) {
-      const value = await options[1].getAttribute("value");
-      if (value) await select.selectOption(value);
-    }
-  }
-
-  const checkboxes = page.locator('input[type="checkbox"]');
-  const cbCount = await checkboxes.count();
-  for (let i = 0; i < cbCount; i++) {
-    const cb = checkboxes.nth(i);
-    if (!(await cb.isChecked())) {
-      await cb.check();
-    }
-  }
-
-  await page.waitForTimeout(1500);
-
   const submitBtn = page.locator('button[type="submit"]');
   if (await submitBtn.count()) {
-    console.log("Submitting...");
     await submitBtn.first().click();
   }
 
@@ -143,8 +116,7 @@ async function run() {
   const applicationRows = applicationsData.data.values || [];
 
   const browser = await chromium.launch({ headless: true });
-  const context = await browser.newContext();
-  const page = await context.newPage();
+  const page = await browser.newPage();
 
   let appliedCount = 0;
 
@@ -165,7 +137,7 @@ async function run() {
     ] = scoringRows[i];
 
     if (decision !== "APPLY") continue;
-    if (resumeGenerated !== "TRUE") continue;
+    if (!resumeGenerated || resumeGenerated.toString().toUpperCase() !== "TRUE") continue;
 
     const intakeMatch = intakeRows.find(r => r[0] === jobId);
     if (!intakeMatch) continue;
@@ -178,18 +150,15 @@ async function run() {
     let applicationStatus = "PENDING";
 
     if (appIndex !== -1) {
-      applicationStatus = applicationRows[appIndex][6];
+      applicationStatus = applicationRows[appIndex][6] || "PENDING";
     }
 
     if (applicationStatus !== "PENDING") continue;
 
-    // 🔥 THIS MATCHES generatePDF.js
-    const resumePath = "output/resume_output.pdf";
-
     console.log(`Applying to ${company} - ${role}`);
 
     try {
-      await applyToGreenhouse(page, applyUrl, resumePath);
+      await applyToGreenhouse(page, applyUrl);
 
       const today = new Date().toISOString();
 
@@ -211,17 +180,6 @@ async function run() {
               ""
             ]]
           }
-        });
-      } else {
-        const rowNumber = appIndex + 2;
-
-        await sheets.spreadsheets.values.update({
-          spreadsheetId,
-          range: `Applications!G${rowNumber}`,
-          valueInputOption: "USER_ENTERED",
-          requestBody: {
-            values: [["SUBMITTED"]],
-          },
         });
       }
 
