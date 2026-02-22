@@ -1,0 +1,21 @@
+name: Fetch RemoteOK Jobs
+
+on:
+  workflow_dispatch:
+
+jobs:
+  remoteok:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 18
+
+      - run: npm install
+
+      - run: node scripts/runRemoteOK.js
+        env:
+          GOOGLE_SERVICE_ACCOUNT: ${{ secrets.GOOGLE_SERVICE_ACCOUNT }}
