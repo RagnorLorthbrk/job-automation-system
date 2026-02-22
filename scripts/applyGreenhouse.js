@@ -184,7 +184,7 @@ async function run() {
     if (applicationStatus !== "PENDING") continue;
 
     // 🔥 FIXED PATH HERE
-    const resumePath = `resume_${jobId}.pdf`;
+    const resumePath = `output/resume_output.pdf ;
 
     console.log(`Applying to ${company} - ${role}`);
 
