@@ -20,9 +20,10 @@ async function getSheetsClient() {
 async function run() {
   const sheets = await getSheetsClient();
 
+  // ⬇️ Updated range to include column K (Application_Status)
   const scoringData = await sheets.spreadsheets.values.get({
     spreadsheetId,
-    range: "Scoring!A2:J",
+    range: "Scoring!A2:K",
   });
 
   const scoringRows = scoringData.data.values || [];
@@ -47,7 +48,8 @@ async function run() {
       gaps,
       reason,
       dateScored,
-      resumeGenerated
+      resumeGenerated,
+      applicationStatus
     ] = row;
 
     const numericScore = Number(score);
@@ -93,12 +95,13 @@ async function run() {
 
     const rowNumber = i + 2;
 
+    // ⬇️ Update BOTH Resume_Generated (J) and Application_Status (K)
     await sheets.spreadsheets.values.update({
       spreadsheetId,
-      range: `Scoring!J${rowNumber}`,
+      range: `Scoring!J${rowNumber}:K${rowNumber}`,
       valueInputOption: "USER_ENTERED",
       requestBody: {
-        values: [["TRUE"]]
+        values: [["TRUE", "PENDING"]]
       }
     });
 
