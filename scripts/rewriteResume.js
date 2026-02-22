@@ -16,7 +16,6 @@ async function rewriteResume() {
       "utf-8"
     );
 
-    // If JD too short → just use master
     if (jobDescription.length < 300) {
       fs.writeFileSync(
         "data/tailored_resume.json",
@@ -33,15 +32,14 @@ async function rewriteResume() {
         {
           role: "system",
           content: `
-Modify only:
+Only modify:
 - summary
 - personal.headline
-- experience[].achievements
+- experience[].high_impact_achievements
 - skills arrays
 
-Do NOT change structure.
-Return only fields that need modification.
-Output valid JSON.
+DO NOT remove company, location, start, end.
+Return JSON with only fields to modify.
 `
         },
         {
@@ -64,19 +62,32 @@ ${JSON.stringify(masterResume)}
 
     const aiChanges = JSON.parse(content);
 
-    // Merge AI changes safely into master resume
     const finalResume = { ...masterResume };
 
-    if (aiChanges.summary) finalResume.summary = aiChanges.summary;
-    if (aiChanges.personal?.headline)
+    if (aiChanges.summary) {
+      finalResume.summary = aiChanges.summary;
+    }
+
+    if (aiChanges.personal?.headline) {
       finalResume.personal.headline = aiChanges.personal.headline;
+    }
 
     if (aiChanges.experience) {
-      finalResume.experience = aiChanges.experience;
+      aiChanges.experience.forEach((expChange, index) => {
+        if (finalResume.experience[index]) {
+          if (expChange.high_impact_achievements) {
+            finalResume.experience[index].high_impact_achievements =
+              expChange.high_impact_achievements;
+          }
+        }
+      });
     }
 
     if (aiChanges.skills) {
-      finalResume.skills = aiChanges.skills;
+      finalResume.skills = {
+        ...finalResume.skills,
+        ...aiChanges.skills
+      };
     }
 
     fs.writeFileSync(
