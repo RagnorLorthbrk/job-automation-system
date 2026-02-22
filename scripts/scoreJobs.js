@@ -60,27 +60,48 @@ async function scoreJobs() {
         {
           role: "system",
           content: `
-You are an expert SaaS hiring evaluator.
+You are a senior global digital marketing hiring strategist.
 
-Score resume match from 0–100 based on:
-- Role alignment
-- Seniority fit
-- Demand generation relevance
-- SaaS experience
-- Leadership depth
+Candidate profile:
+- 10+ years digital marketing (B2B + B2C)
+- Agency + in-house
+- Enterprise brands + SMEs
+- Performance marketing specialist
+- Paid media, CRM automation, lifecycle
+- run email marketing campaigns 
+- set up and manage CRM automations
+- Run anf set uip affiliate marketing campaigns
+- Run Social Media Ads
+- Run Instagram, tik-tok, meta, snapchat, reddit, Pinterest, twitter (X) ads
+- Google ads, bing ads, Google Ads Editor, Bing Ads Editors 
+- Demand generation, acquisition, growth
+- Multi-industry exposure
+- Budgets managed from $10 to $1M+
 
-Respond ONLY in JSON:
+IMPORTANT RULES:
+- Industry mismatch alone should NOT reduce score.
+- Functional mismatch MUST reduce score heavily.
+- Any non-digital role (legal, HR, field engineering, sales ops, etc.) should score below 10.
+- Social media, paid media, growth, demand gen, CRM, lifecycle, performance roles are relevant.
+- Broader digital marketing leadership is a strength.
+
+Return ONLY valid JSON:
 
 {
-  "score": number,
-  "strengths": "short paragraph",
-  "gaps": "short paragraph"
+  "score": number (0-100),
+  "decision": "APPLY" or "SKIP",
+  "strengths": "concise paragraph",
+  "gaps": "concise paragraph",
+  "reason": "short explanation"
 }
 `
         },
         {
           role: "user",
           content: `
+JOB TITLE:
+${role}
+
 JOB DESCRIPTION:
 ${jobDescription}
 
@@ -99,9 +120,15 @@ ${JSON.stringify(masterResume)}
     const parsed = JSON.parse(content);
 
     const score = parsed.score;
-    const decision = score >= 80 ? "APPLY" : "SKIP";
 
-    // Write to Scoring sheet
+    // Adjustable threshold
+    const threshold = 60;
+
+    const decision = score >= threshold ? "APPLY" : "SKIP";
+
+    // Write to Scoring sheet aligned with YOUR headers:
+    // Job_ID | Company | Role | Match_Score | Decision | Strengths | Gaps | Reason | Date_Scored | Resume_Generated
+
     await sheets.spreadsheets.values.append({
       spreadsheetId,
       range: "Scoring!A1",
@@ -115,16 +142,15 @@ ${JSON.stringify(masterResume)}
           decision,
           parsed.strengths,
           parsed.gaps,
-          decision === "APPLY"
-            ? "Strong alignment with demand generation leadership."
-            : "Insufficient alignment with seniority or SaaS depth.",
-          new Date().toISOString()
+          parsed.reason,
+          new Date().toISOString(),
+          "FALSE"
         ]]
       }
     });
 
-    // Update Job Intake status to SCORED
-    const rowNumber = i + 2; // because sheet starts at A2
+    // Update Intake status to SCORED
+    const rowNumber = i + 2;
     await sheets.spreadsheets.values.update({
       spreadsheetId,
       range: `Job Intake!I${rowNumber}`,
@@ -134,7 +160,7 @@ ${JSON.stringify(masterResume)}
       }
     });
 
-    console.log(`Completed scoring for ${jobId} → ${decision}`);
+    console.log(`Completed scoring for ${jobId} → ${decision} (${score})`);
   }
 }
 
