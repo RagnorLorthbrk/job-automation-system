@@ -3,7 +3,7 @@ import fs from "fs";
 import { execSync } from "child_process";
 
 const SERVICE_ACCOUNT = JSON.parse(process.env.GOOGLE_SERVICE_ACCOUNT);
-const spreadsheetId = "PASTE_YOUR_SHEET_ID_HERE";
+const spreadsheetId = "1VLZUQJh-lbzA2K4TtSQALgqgwWmnGmSHngKYQubG7Ng";
 
 async function getSheetsClient() {
   const auth = new google.auth.GoogleAuth({
