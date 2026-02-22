@@ -47,7 +47,7 @@ function shouldEvaluate(title = "") {
     "google ads",
     "bing ads",
     "DV360",
-    "Facebook ads"
+    "Facebook ads",
     "Instagram ads",
     "Automation",
     "reddit ads",
