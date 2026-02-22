@@ -2,7 +2,7 @@ import fs from "fs";
 
 function formatExperience(experienceArray = []) {
   return experienceArray.map(exp => {
-    const achievements = (exp.achievements || [])
+    const achievements = (exp.high_impact_achievements || [])
       .map(a => `<li>${a}</li>`)
       .join("");
 
@@ -18,30 +18,17 @@ function formatExperience(experienceArray = []) {
   }).join("");
 }
 
-function formatEducation(educationArray = []) {
-  return educationArray.map(edu => {
-    return `
-      <p><strong>${edu.degree || ""}</strong> — ${edu.institution || ""}, ${edu.location || ""} (${edu.year || ""})</p>
-    `;
-  }).join("");
-}
-
 function renderResume() {
   const template = fs.readFileSync("templates/resume_template.html", "utf-8");
   const data = JSON.parse(fs.readFileSync("data/tailored_resume.json", "utf-8"));
 
   const headline =
     data.personal?.headline ||
-    data.personal?.title ||
+    data.personal?.headline_base ||
     "";
-
-  const workPrefs = Array.isArray(data.personal?.work_preferences)
-    ? data.personal.work_preferences.join(" | ")
-    : "";
 
   const contactLine = `
 ${data.personal?.phone || ""} | ${data.personal?.email || ""} | ${data.personal?.location || ""}
-${workPrefs}
 `;
 
   const linkedinURL =
@@ -51,20 +38,26 @@ ${workPrefs}
       ? "https://" + data.personal.linkedin
       : "#";
 
+  const summary = data.summary || data.summary_master || "";
+
+  const skillsDemand = (data.skills?.demand_generation || []).join(", ");
+  const skillsTools = (data.skills?.tools_platforms || []).join(", ");
+  const skillsLeadership = (data.skills?.leadership_operations || []).join(", ");
+
   let html = template
     .replace("{{name}}", data.personal?.name || "")
     .replace("{{headline}}", headline)
     .replace("{{contact_line}}", contactLine)
     .replace("{{linkedin_url}}", linkedinURL)
-    .replace("{{summary}}", data.summary || "")
+    .replace("{{summary}}", summary)
     .replace("{{experience}}", formatExperience(data.experience))
-    .replace("{{education}}", formatEducation(data.education))
-    .replace("{{skills_marketing}}", (data.skills?.marketing || []).join(", "))
-    .replace("{{skills_tools}}", (data.skills?.tools || []).join(", "))
-    .replace("{{skills_communication}}", (data.skills?.communication || []).join(", "))
-    .replace("{{skills_analytics}}", (data.skills?.analytics || []).join(", "))
-    .replace("{{skills_operations}}", (data.skills?.operations || []).join(", "))
-    .replace("{{skills_languages}}", (data.skills?.languages || []).join(", "));
+    .replace("{{education}}", "") // no education section in this schema
+    .replace("{{skills_marketing}}", skillsDemand)
+    .replace("{{skills_tools}}", skillsTools)
+    .replace("{{skills_communication}}", skillsLeadership)
+    .replace("{{skills_analytics}}", "")
+    .replace("{{skills_operations}}", "")
+    .replace("{{skills_languages}}", "");
 
   fs.writeFileSync("output/final_resume.html", html);
 
