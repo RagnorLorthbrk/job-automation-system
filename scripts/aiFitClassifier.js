@@ -29,10 +29,11 @@ Task:
 Determine if this role is a strong strategic fit.
 
 Consider:
-- Seniority alignment
-- Demand generation / performance marketing focus
-- Paid media / CRM / email automation alignment
-- Career trajectory consistency
+- Alignment with senior digital marketing leadership roles
+- Performance marketing, paid media, CRM automation, lifecycle marketing
+- Demand generation, acquisition, and growth ownership
+- Multi-industry relevance (B2B or B2C acceptable)
+- Budget responsibility and strategic ownership
 - Geographic feasibility for an India-based candidate (must be global remote or visa supported)
 
 Respond ONLY in valid JSON:
@@ -53,7 +54,10 @@ Respond ONLY in valid JSON:
     ]
   });
 
-  const content = response.choices[0].message.content;
+  let content = response.choices[0].message.content
+    .replace(/```json/g, "")
+    .replace(/```/g, "")
+    .trim();
 
   try {
     return JSON.parse(content);
