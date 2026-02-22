@@ -43,13 +43,13 @@ async function applyToGreenhouse(page, jobUrl, resumePath) {
   await page.goto(jobUrl, { waitUntil: "domcontentloaded" });
   await page.waitForTimeout(2000);
 
-  const applyButton = page.locator('text=Apply');
+  const applyButton = page.locator("text=Apply");
   if (await applyButton.count()) {
     await applyButton.first().click();
     await page.waitForTimeout(2000);
   }
 
-  console.log("Filling basic fields...");
+  console.log("Filling form...");
 
   await fillField(page, [
     'input[name="first_name"]',
@@ -111,7 +111,7 @@ async function applyToGreenhouse(page, jobUrl, resumePath) {
 
   const submitBtn = page.locator('button[type="submit"]');
   if (await submitBtn.count()) {
-    console.log("Submitting application...");
+    console.log("Submitting...");
     await submitBtn.first().click();
   }
 
@@ -183,8 +183,8 @@ async function run() {
 
     if (applicationStatus !== "PENDING") continue;
 
-    // 🔥 FIXED PATH HERE
-    const resumePath = `output/resume_output.pdf ;
+    // 🔥 THIS MATCHES generatePDF.js
+    const resumePath = "output/resume_output.pdf";
 
     console.log(`Applying to ${company} - ${role}`);
 
@@ -203,7 +203,7 @@ async function run() {
               jobId,
               company,
               role,
-              `resume_${jobId}.pdf`,
+              "resume_output.pdf",
               "",
               today,
               "SUBMITTED",
@@ -211,6 +211,17 @@ async function run() {
               ""
             ]]
           }
+        });
+      } else {
+        const rowNumber = appIndex + 2;
+
+        await sheets.spreadsheets.values.update({
+          spreadsheetId,
+          range: `Applications!G${rowNumber}`,
+          valueInputOption: "USER_ENTERED",
+          requestBody: {
+            values: [["SUBMITTED"]],
+          },
         });
       }
 
