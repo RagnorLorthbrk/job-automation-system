@@ -19,14 +19,18 @@ jobs:
       - name: Install dependencies
         run: npm install
 
-      # ✅ Step 1: Generate resumes inside SAME runner
+      # 🔥 Install Playwright browsers
+      - name: Install Playwright Browsers
+        run: npx playwright install --with-deps
+
+      # Step 1: Generate resumes
       - name: Generate Resumes For Approved Jobs
         run: node scripts/generateForApprovedJobs.js
         env:
           GOOGLE_SERVICE_ACCOUNT: ${{ secrets.GOOGLE_SERVICE_ACCOUNT }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
 
-      # ✅ Step 2: Apply to Greenhouse
+      # Step 2: Apply to Greenhouse
       - name: Apply to Greenhouse Jobs
         run: node scripts/applyGreenhouse.js
         env:
