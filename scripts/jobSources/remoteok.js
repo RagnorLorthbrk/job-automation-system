@@ -1,48 +1,35 @@
-import { roleMatches, passesVisaOrRemote } from "../filters.js";
 import { insertJob } from "../sheetInsert.js";
+import { evaluateJobFit } from "../aiFitClassifier.js";
 
 export async function fetchRemoteOK() {
   console.log("Fetching RemoteOK jobs...");
 
   const response = await fetch("https://remoteok.com/api", {
-    headers: {
-      "User-Agent": "Mozilla/5.0"
-    }
+    headers: { "User-Agent": "Mozilla/5.0" }
   });
 
-  if (!response.ok) {
-    throw new Error(`RemoteOK API error: ${response.status}`);
-  }
-
   const data = await response.json();
-
-  // First item is metadata
   const jobs = data.slice(1);
-
-  let insertedCount = 0;
 
   for (const job of jobs) {
     const normalized = {
       external_id: "REMOTEOK-" + job.id,
       company: job.company || "",
       role: job.position || "",
-      location: job.location || "Remote",
+      location: job.location || "",
       apply_url: job.url || "",
       description: job.description || "",
       source: "RemoteOK"
     };
 
-    if (!roleMatches(normalized.role, normalized.description)) {
-      continue;
-    }
+    console.log("Evaluating:", normalized.role);
 
-    if (!passesVisaOrRemote(normalized.location, normalized.description)) {
-      continue;
-    }
+    const result = await evaluateJobFit(normalized);
 
-    await insertJob(normalized);
-    insertedCount++;
+    console.log("AI Result:", result);
+
+    if (result.fit && result.confidence >= 75) {
+      await insertJob(normalized);
+    }
   }
-
-  console.log(`RemoteOK inserted: ${insertedCount}`);
 }
