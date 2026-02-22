@@ -49,7 +49,7 @@ async function scoreJobs() {
       status
     ] = row;
 
-    if (status !== "NEW") continue;
+    if (!status || status.toUpperCase() !== "NEW") continue;
 
     console.log(`Scoring job: ${company} - ${role}`);
 
