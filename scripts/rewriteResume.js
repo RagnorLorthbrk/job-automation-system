@@ -16,6 +16,16 @@ async function rewriteResume() {
       "utf-8"
     );
 
+    // If JD too short → just use master
+    if (jobDescription.length < 300) {
+      fs.writeFileSync(
+        "data/tailored_resume.json",
+        JSON.stringify(masterResume, null, 2)
+      );
+      console.log("⚠️ JD too short. Using master resume.");
+      return;
+    }
+
     const response = await openai.chat.completions.create({
       model: "gpt-4o-mini",
       temperature: 0.3,
@@ -23,17 +33,15 @@ async function rewriteResume() {
         {
           role: "system",
           content: `
-You are an expert SaaS resume optimizer.
+Modify only:
+- summary
+- personal.headline
+- experience[].achievements
+- skills arrays
 
-CRITICAL RULES:
-- You MUST preserve the exact JSON structure provided.
-- You MUST NOT remove any keys.
-- You MUST NOT remove education.
-- You MUST NOT remove skills categories.
-- You MUST NOT remove work_preferences.
-- You MUST NOT change role names, companies, or dates.
-- Only improve summary, headline, achievements, and skills depth.
-- Output complete valid JSON.
+Do NOT change structure.
+Return only fields that need modification.
+Output valid JSON.
 `
         },
         {
@@ -42,36 +50,43 @@ CRITICAL RULES:
 JOB DESCRIPTION:
 ${jobDescription}
 
-MASTER RESUME JSON:
-${JSON.stringify(masterResume, null, 2)}
-
-Rewrite the resume to better align with the job description while preserving structure.
+MASTER RESUME:
+${JSON.stringify(masterResume)}
 `
         }
       ]
     });
 
-    let rewritten = response.choices[0].message.content
+    let content = response.choices[0].message.content
       .replace(/```json/g, "")
       .replace(/```/g, "")
       .trim();
 
-    const parsed = JSON.parse(rewritten);
+    const aiChanges = JSON.parse(content);
 
-    // Safety: ensure missing fields fallback to master
-    parsed.education = parsed.education || masterResume.education;
-    parsed.skills = parsed.skills || masterResume.skills;
-    parsed.personal.work_preferences =
-      parsed.personal.work_preferences || masterResume.personal.work_preferences;
+    // Merge AI changes safely into master resume
+    const finalResume = { ...masterResume };
+
+    if (aiChanges.summary) finalResume.summary = aiChanges.summary;
+    if (aiChanges.personal?.headline)
+      finalResume.personal.headline = aiChanges.personal.headline;
+
+    if (aiChanges.experience) {
+      finalResume.experience = aiChanges.experience;
+    }
+
+    if (aiChanges.skills) {
+      finalResume.skills = aiChanges.skills;
+    }
 
     fs.writeFileSync(
       "data/tailored_resume.json",
-      JSON.stringify(parsed, null, 2)
+      JSON.stringify(finalResume, null, 2)
     );
 
-    console.log("✅ Resume rewritten safely.");
-  } catch (error) {
-    console.error("❌ Rewrite error:", error);
+    console.log("✅ Resume safely rewritten.");
+  } catch (err) {
+    console.error("Rewrite error:", err);
     process.exit(1);
   }
 }
