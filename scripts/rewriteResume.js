@@ -33,13 +33,12 @@ async function rewriteResume() {
           role: "system",
           content: `
 Only modify:
-- summary
-- personal.headline
+- summary_master
+- personal.headline_base
 - experience[].high_impact_achievements
-- skills arrays
+- add additional skills per section (do NOT remove existing ones)
 
-DO NOT remove company, location, start, end.
-Return JSON with only fields to modify.
+Return only fields that need modification.
 `
         },
         {
@@ -62,32 +61,40 @@ ${JSON.stringify(masterResume)}
 
     const aiChanges = JSON.parse(content);
 
-    const finalResume = { ...masterResume };
+    const finalResume = JSON.parse(JSON.stringify(masterResume));
 
-    if (aiChanges.summary) {
-      finalResume.summary = aiChanges.summary;
+    if (aiChanges.summary_master) {
+      finalResume.summary_master = aiChanges.summary_master;
     }
 
-    if (aiChanges.personal?.headline) {
-      finalResume.personal.headline = aiChanges.personal.headline;
+    if (aiChanges.personal?.headline_base) {
+      finalResume.personal.headline_base =
+        aiChanges.personal.headline_base;
     }
 
     if (aiChanges.experience) {
       aiChanges.experience.forEach((expChange, index) => {
-        if (finalResume.experience[index]) {
-          if (expChange.high_impact_achievements) {
-            finalResume.experience[index].high_impact_achievements =
-              expChange.high_impact_achievements;
-          }
+        if (
+          finalResume.experience[index] &&
+          expChange.high_impact_achievements
+        ) {
+          finalResume.experience[index].high_impact_achievements =
+            expChange.high_impact_achievements;
         }
       });
     }
 
     if (aiChanges.skills) {
-      finalResume.skills = {
-        ...finalResume.skills,
-        ...aiChanges.skills
-      };
+      Object.keys(aiChanges.skills).forEach((section) => {
+        if (finalResume.skills[section]) {
+          const staticSkills = finalResume.skills[section];
+          const aiSkills = aiChanges.skills[section] || [];
+
+          const merged = [...new Set([...staticSkills, ...aiSkills])];
+
+          finalResume.skills[section] = merged.slice(0, 20);
+        }
+      });
     }
 
     fs.writeFileSync(
