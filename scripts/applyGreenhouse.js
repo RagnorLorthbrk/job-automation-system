@@ -7,7 +7,6 @@ const spreadsheetId = "1VLZUQJh-lbzA2K4TtSQALgqgwWmnGmSHngKYQubG7Ng";
 
 const MAX_APPLICATIONS_PER_RUN = 2;
 
-// Basic applicant info (comes from master resume file)
 const master = JSON.parse(
   fs.readFileSync("data/master_resume.json", "utf-8")
 );
@@ -30,7 +29,6 @@ async function getSheetsClient() {
 async function applyToGreenhouse(page, jobUrl, resumePath) {
   await page.goto(jobUrl, { waitUntil: "domcontentloaded" });
 
-  // Click Apply button if present
   const applyButton = page.locator("text=Apply for this job");
   if (await applyButton.count()) {
     await applyButton.first().click();
@@ -38,7 +36,6 @@ async function applyToGreenhouse(page, jobUrl, resumePath) {
 
   await page.waitForTimeout(2000);
 
-  // Fill basic fields (Greenhouse standard names)
   await page.fill('input[name="first_name"]', FIRST_NAME);
   await page.fill('input[name="last_name"]', LAST_NAME);
   await page.fill('input[name="email"]', EMAIL);
@@ -47,19 +44,16 @@ async function applyToGreenhouse(page, jobUrl, resumePath) {
     await page.fill('input[name="phone"]', PHONE);
   }
 
-  // Resume upload
   const resumeInput = page.locator('input[type="file"]');
   if (await resumeInput.count()) {
     await resumeInput.setInputFiles(resumePath);
   }
 
-  // LinkedIn if present
   const linkedinInput = page.locator('input[name*="linkedin"]');
   if (await linkedinInput.count()) {
     await linkedinInput.fill(LINKEDIN);
   }
 
-  // Auto-fill dropdowns with first available option
   const selects = page.locator("select");
   const selectCount = await selects.count();
 
@@ -72,7 +66,6 @@ async function applyToGreenhouse(page, jobUrl, resumePath) {
     }
   }
 
-  // Check all required checkboxes (e.g., GDPR)
   const checkboxes = page.locator('input[type="checkbox"]');
   const cbCount = await checkboxes.count();
   for (let i = 0; i < cbCount; i++) {
@@ -84,7 +77,6 @@ async function applyToGreenhouse(page, jobUrl, resumePath) {
 
   await page.waitForTimeout(1500);
 
-  // Submit
   const submitBtn = page.locator('button[type="submit"]');
   if (await submitBtn.count()) {
     await submitBtn.first().click();
@@ -98,7 +90,7 @@ async function run() {
 
   const scoringData = await sheets.spreadsheets.values.get({
     spreadsheetId,
-    range: "Scoring!A2:K",
+    range: "Scoring!A2:J",
   });
 
   const scoringRows = scoringData.data.values || [];
@@ -110,10 +102,14 @@ async function run() {
 
   const intakeRows = intakeData.data.values || [];
 
-  const browser = await chromium.launch({
-    headless: true,
+  const applicationsData = await sheets.spreadsheets.values.get({
+    spreadsheetId,
+    range: "Applications!A2:J",
   });
 
+  const applicationRows = applicationsData.data.values || [];
+
+  const browser = await chromium.launch({ headless: true });
   const context = await browser.newContext();
   const page = await context.newPage();
 
@@ -132,19 +128,27 @@ async function run() {
       gaps,
       reason,
       dateScored,
-      resumeGenerated,
-      applicationStatus
+      resumeGenerated
     ] = scoringRows[i];
 
     if (decision !== "APPLY") continue;
     if (resumeGenerated !== "TRUE") continue;
-    if (applicationStatus !== "PENDING") continue;
 
     const intakeMatch = intakeRows.find(r => r[0] === jobId);
     if (!intakeMatch) continue;
 
     const applyUrl = intakeMatch[4];
     if (!applyUrl || !applyUrl.includes("greenhouse.io")) continue;
+
+    const appIndex = applicationRows.findIndex(r => r[0] === jobId);
+
+    let applicationStatus = "PENDING";
+
+    if (appIndex !== -1) {
+      applicationStatus = applicationRows[appIndex][6];
+    }
+
+    if (applicationStatus !== "PENDING") continue;
 
     const resumePath = `output/resume_${jobId}.pdf`;
 
@@ -153,32 +157,44 @@ async function run() {
     try {
       await applyToGreenhouse(page, applyUrl, resumePath);
 
-      const rowNumber = i + 2;
+      const today = new Date().toISOString();
 
-      await sheets.spreadsheets.values.update({
-        spreadsheetId,
-        range: `Scoring!K${rowNumber}`,
-        valueInputOption: "USER_ENTERED",
-        requestBody: {
-          values: [["SUBMITTED"]],
-        },
-      });
+      if (appIndex === -1) {
+        await sheets.spreadsheets.values.append({
+          spreadsheetId,
+          range: "Applications!A1",
+          valueInputOption: "USER_ENTERED",
+          requestBody: {
+            values: [[
+              jobId,
+              company,
+              role,
+              `resume_${jobId}.pdf`,
+              "",
+              today,
+              "SUBMITTED",
+              "",
+              ""
+            ]]
+          }
+        });
+      } else {
+        const rowNumber = appIndex + 2;
+
+        await sheets.spreadsheets.values.update({
+          spreadsheetId,
+          range: `Applications!G${rowNumber}`,
+          valueInputOption: "USER_ENTERED",
+          requestBody: {
+            values: [["SUBMITTED"]],
+          },
+        });
+      }
 
       appliedCount++;
 
     } catch (err) {
       console.error("Application failed:", err);
-
-      const rowNumber = i + 2;
-
-      await sheets.spreadsheets.values.update({
-        spreadsheetId,
-        range: `Scoring!K${rowNumber}`,
-        valueInputOption: "USER_ENTERED",
-        requestBody: {
-          values: [["FAILED"]],
-        },
-      });
     }
   }
 
