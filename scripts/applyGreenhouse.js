@@ -74,7 +74,9 @@ async function generateResumeForJob(jobId, jobDescription) {
 /* ---------------- Smart Field Engine ---------------- */
 
 async function fillTextFields(page) {
-  const inputs = await page.$$("input[type='text'], input[type='email'], input[type='tel'], textarea']");
+  const inputs = await page.$$(
+    "input[type='text'], input[type='email'], input[type='tel'], textarea"
+  );
 
   for (const input of inputs) {
     const name = ((await input.getAttribute("name")) || "").toLowerCase();
@@ -188,13 +190,15 @@ async function applyToGreenhouse(page, jobUrl, resumePath) {
   if (!success) {
     console.log("❌ Submission not confirmed. Saving debug files.");
 
+    const timestamp = Date.now();
+
     await page.screenshot({
-      path: `failure_${Date.now()}.png`,
+      path: `failure_${timestamp}.png`,
       fullPage: true
     });
 
     const html = await page.content();
-    fs.writeFileSync(`failure_${Date.now()}.html`, html);
+    fs.writeFileSync(`failure_${timestamp}.html`, html);
 
     throw new Error("Submission not confirmed");
   }
