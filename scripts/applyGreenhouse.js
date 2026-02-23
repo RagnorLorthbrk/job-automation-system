@@ -18,6 +18,8 @@ const EMAIL = master.personal.email;
 const PHONE = master.personal.phone;
 const LINKEDIN = master.personal.linkedin;
 
+/* ---------------- SHEETS ---------------- */
+
 async function getSheetsClient() {
   const auth = new google.auth.GoogleAuth({
     credentials: SERVICE_ACCOUNT,
@@ -27,19 +29,45 @@ async function getSheetsClient() {
   return google.sheets({ version: "v4", auth });
 }
 
-async function fillField(page, selectors, value) {
-  for (const selector of selectors) {
-    const el = page.locator(selector);
-    if (await el.count()) {
-      await el.first().fill(value);
+/* ---------------- HELPERS ---------------- */
+
+async function waitForFile(path, timeout = 15000) {
+  const start = Date.now();
+
+  while (Date.now() - start < timeout) {
+    if (fs.existsSync(path)) return true;
+    await new Promise(r => setTimeout(r, 500));
+  }
+
+  throw new Error(`File not created: ${path}`);
+}
+
+async function smartFill(page, keywords, value) {
+  const inputs = page.locator("input, textarea");
+
+  const count = await inputs.count();
+
+  for (let i = 0; i < count; i++) {
+    const el = inputs.nth(i);
+    const name = (await el.getAttribute("name")) || "";
+    const id = (await el.getAttribute("id")) || "";
+
+    const match = keywords.some(k =>
+      name.toLowerCase().includes(k) ||
+      id.toLowerCase().includes(k)
+    );
+
+    if (match) {
+      await el.fill(value);
       return true;
     }
   }
   return false;
 }
 
+/* ---------------- RESUME ---------------- */
+
 async function generateResumeForJob(jobId, jobDescription) {
-  console.log(`Generating resume for ${jobId}`);
 
   if (!fs.existsSync("output")) {
     fs.mkdirSync("output");
@@ -49,135 +77,132 @@ async function generateResumeForJob(jobId, jobDescription) {
 
   execSync("node scripts/generateResume.js", { stdio: "inherit" });
 
-  const newFileName = `resume_${jobId}.pdf`;
+  await waitForFile("output/resume_output.pdf");
 
-  fs.renameSync(
-    "output/resume_output.pdf",
-    `output/${newFileName}`
-  );
+  const newFile = `output/resume_${jobId}.pdf`;
 
-  return `output/${newFileName}`;
+  fs.renameSync("output/resume_output.pdf", newFile);
+
+  return newFile;
+}
+
+/* ---------------- GREENHOUSE APPLY ---------------- */
+
+async function openApplicationForm(page) {
+
+  const buttons = page.locator("button, a");
+
+  const count = await buttons.count();
+
+  for (let i = 0; i < count; i++) {
+    const text = (await buttons.nth(i).innerText()).toLowerCase();
+
+    if (text.includes("apply")) {
+      await buttons.nth(i).click();
+      await page.waitForTimeout(2500);
+      return;
+    }
+  }
+}
+
+async function verifySubmission(page) {
+
+  const successIndicators = [
+    "thank",
+    "submitted",
+    "received",
+    "application"
+  ];
+
+  const body = (await page.content()).toLowerCase();
+
+  return successIndicators.some(w => body.includes(w));
 }
 
 async function applyToGreenhouse(page, jobUrl, resumePath) {
+
   console.log("Opening:", jobUrl);
 
   await page.goto(jobUrl, { waitUntil: "domcontentloaded" });
-  await page.waitForTimeout(2000);
 
-  const applyButton = page.locator("text=Apply");
-  if (await applyButton.count()) {
-    await applyButton.first().click();
-    await page.waitForTimeout(2000);
+  await openApplicationForm(page);
+
+  await smartFill(page, ["first"], FIRST_NAME);
+  await smartFill(page, ["last"], LAST_NAME);
+  await smartFill(page, ["email"], EMAIL);
+  await smartFill(page, ["phone"], PHONE);
+  await smartFill(page, ["linkedin"], LINKEDIN);
+
+  const fileInput = page.locator('input[type="file"]');
+
+  if (await fileInput.count()) {
+    await fileInput.first().setInputFiles(resumePath);
+  } else {
+    throw new Error("Resume upload field not found");
   }
 
-  await fillField(page, [
-    'input[name="first_name"]',
-    'input[id="first_name"]',
-    'input[name="job_application[first_name]"]'
-  ], FIRST_NAME);
+  const submitBtn = page.locator('button[type="submit"], input[type="submit"]');
 
-  await fillField(page, [
-    'input[name="last_name"]',
-    'input[id="last_name"]',
-    'input[name="job_application[last_name]"]'
-  ], LAST_NAME);
-
-  await fillField(page, [
-    'input[name="email"]',
-    'input[id="email"]',
-    'input[name="job_application[email]"]'
-  ], EMAIL);
-
-  await fillField(page, [
-    'input[name="phone"]',
-    'input[id="phone"]',
-    'input[name="job_application[phone]"]'
-  ], PHONE);
-
-  const resumeInput = page.locator('input[type="file"]');
-  if (await resumeInput.count()) {
-    await resumeInput.first().setInputFiles(resumePath);
+  if (!(await submitBtn.count())) {
+    throw new Error("Submit button not found");
   }
 
-  await fillField(page, [
-    'input[name*="linkedin"]',
-    'input[id*="linkedin"]'
-  ], LINKEDIN);
+  await submitBtn.first().click();
 
-  const submitBtn = page.locator('button[type="submit"]');
-  if (await submitBtn.count()) {
-    console.log("Submitting...");
-    await submitBtn.first().click();
+  await page.waitForTimeout(5000);
+
+  const success = await verifySubmission(page);
+
+  if (!success) {
+    throw new Error("Submission not confirmed");
   }
-
-  await page.waitForTimeout(4000);
 }
 
+/* ---------------- MAIN ---------------- */
+
 async function run() {
+
   const sheets = await getSheetsClient();
 
-  const scoringData = await sheets.spreadsheets.values.get({
-    spreadsheetId,
-    range: "Scoring!A2:J",
-  });
+  const scoringRows =
+    (await sheets.spreadsheets.values.get({
+      spreadsheetId,
+      range: "Scoring!A2:J",
+    })).data.values || [];
 
-  const scoringRows = scoringData.data.values || [];
-
-  const intakeData = await sheets.spreadsheets.values.get({
-    spreadsheetId,
-    range: "Job Intake!A2:I",
-  });
-
-  const intakeRows = intakeData.data.values || [];
-
-  const applicationsData = await sheets.spreadsheets.values.get({
-    spreadsheetId,
-    range: "Applications!A2:J",
-  });
-
-  const applicationRows = applicationsData.data.values || [];
+  const intakeRows =
+    (await sheets.spreadsheets.values.get({
+      spreadsheetId,
+      range: "Job Intake!A2:I",
+    })).data.values || [];
 
   const browser = await chromium.launch({ headless: true });
   const page = await browser.newPage();
 
   let appliedCount = 0;
 
-  for (let i = 0; i < scoringRows.length; i++) {
+  for (const row of scoringRows) {
+
     if (appliedCount >= MAX_APPLICATIONS_PER_RUN) break;
 
-    const [
-      jobId,
-      company,
-      role,
-      score,
-      decision
-    ] = scoringRows[i];
+    const [jobId, company, role, , decision] = row;
 
     if (decision !== "APPLY") continue;
 
-    const intakeMatch = intakeRows.find(r => r[0] === jobId);
-    if (!intakeMatch) continue;
+    const intake = intakeRows.find(r => r[0] === jobId);
+    if (!intake) continue;
 
-    const applyUrl = intakeMatch[4];
-    const jobDescription = intakeMatch[5];
+    const applyUrl = intake[4];
+    const jobDescription = intake[5];
 
-    if (!applyUrl || !applyUrl.includes("greenhouse.io")) continue;
+    if (!applyUrl?.includes("greenhouse.io")) continue;
 
-    const appIndex = applicationRows.findIndex(r => r[0] === jobId);
-
-    let applicationStatus = "PENDING";
-
-    if (appIndex !== -1) {
-      applicationStatus = applicationRows[appIndex][6] || "PENDING";
-    }
-
-    if (applicationStatus !== "PENDING") continue;
-
-    console.log(`Applying to ${company} - ${role}`);
+    console.log(`Applying → ${company} | ${role}`);
 
     try {
-      const resumePath = await generateResumeForJob(jobId, jobDescription);
+
+      const resumePath =
+        await generateResumeForJob(jobId, jobDescription);
 
       await applyToGreenhouse(page, applyUrl, resumePath);
 
@@ -195,9 +220,7 @@ async function run() {
             `resume_${jobId}.pdf`,
             "",
             today,
-            "SUBMITTED",
-            "",
-            ""
+            "SUBMITTED"
           ]]
         }
       });
@@ -205,7 +228,7 @@ async function run() {
       appliedCount++;
 
     } catch (err) {
-      console.error("Application failed:", err);
+      console.error("❌ Application failed:", err.message);
     }
   }
 
