@@ -3,10 +3,20 @@ import { chromium } from "playwright";
 import fs from "fs";
 import { execSync } from "child_process";
 
-const SERVICE_ACCOUNT = JSON.parse(process.env.GOOGLE_SERVICE_ACCOUNT);
 const spreadsheetId = "1VLZUQJh-lbzA2K4TtSQALgqgwWmnGmSHngKYQubG7Ng";
-
 const MAX_APPLICATIONS_PER_RUN = 2;
+
+if (!process.env.OPENAI_API_KEY) {
+  console.error("❌ OPENAI_API_KEY is missing in environment.");
+  process.exit(1);
+}
+
+if (!process.env.GOOGLE_SERVICE_ACCOUNT) {
+  console.error("❌ GOOGLE_SERVICE_ACCOUNT is missing in environment.");
+  process.exit(1);
+}
+
+const SERVICE_ACCOUNT = JSON.parse(process.env.GOOGLE_SERVICE_ACCOUNT);
 
 const master = JSON.parse(
   fs.readFileSync("data/master_resume.json", "utf-8")
@@ -29,9 +39,9 @@ async function getSheetsClient() {
   return google.sheets({ version: "v4", auth });
 }
 
-/* ---------------- HELPERS ---------------- */
+/* ---------------- SAFE FILE WAIT ---------------- */
 
-async function waitForFile(path, timeout = 15000) {
+async function waitForFile(path, timeout = 20000) {
   const start = Date.now();
 
   while (Date.now() - start < timeout) {
@@ -39,12 +49,43 @@ async function waitForFile(path, timeout = 15000) {
     await new Promise(r => setTimeout(r, 500));
   }
 
-  throw new Error(`File not created: ${path}`);
+  return false;
 }
+
+/* ---------------- RESUME GENERATION ---------------- */
+
+async function generateResumeForJob(jobId, jobDescription) {
+  try {
+    if (!fs.existsSync("output")) {
+      fs.mkdirSync("output");
+    }
+
+    fs.writeFileSync("data/job_description.txt", jobDescription);
+
+    execSync("node scripts/generateResume.js", { stdio: "inherit" });
+
+    const exists = await waitForFile("output/resume_output.pdf");
+
+    if (!exists) {
+      throw new Error("resume_output.pdf not created");
+    }
+
+    const newFile = `output/resume_${jobId}.pdf`;
+
+    fs.renameSync("output/resume_output.pdf", newFile);
+
+    return newFile;
+
+  } catch (err) {
+    console.error("❌ Resume generation failed:", err.message);
+    return null;
+  }
+}
+
+/* ---------------- SMART FIELD FILL ---------------- */
 
 async function smartFill(page, keywords, value) {
   const inputs = page.locator("input, textarea");
-
   const count = await inputs.count();
 
   for (let i = 0; i < count; i++) {
@@ -65,67 +106,23 @@ async function smartFill(page, keywords, value) {
   return false;
 }
 
-/* ---------------- RESUME ---------------- */
-
-async function generateResumeForJob(jobId, jobDescription) {
-
-  if (!fs.existsSync("output")) {
-    fs.mkdirSync("output");
-  }
-
-  fs.writeFileSync("data/job_description.txt", jobDescription);
-
-  execSync("node scripts/generateResume.js", { stdio: "inherit" });
-
-  await waitForFile("output/resume_output.pdf");
-
-  const newFile = `output/resume_${jobId}.pdf`;
-
-  fs.renameSync("output/resume_output.pdf", newFile);
-
-  return newFile;
-}
-
-/* ---------------- GREENHOUSE APPLY ---------------- */
-
-async function openApplicationForm(page) {
-
-  const buttons = page.locator("button, a");
-
-  const count = await buttons.count();
-
-  for (let i = 0; i < count; i++) {
-    const text = (await buttons.nth(i).innerText()).toLowerCase();
-
-    if (text.includes("apply")) {
-      await buttons.nth(i).click();
-      await page.waitForTimeout(2500);
-      return;
-    }
-  }
-}
-
-async function verifySubmission(page) {
-
-  const successIndicators = [
-    "thank",
-    "submitted",
-    "received",
-    "application"
-  ];
-
-  const body = (await page.content()).toLowerCase();
-
-  return successIndicators.some(w => body.includes(w));
-}
+/* ---------------- APPLY LOGIC ---------------- */
 
 async function applyToGreenhouse(page, jobUrl, resumePath) {
 
-  console.log("Opening:", jobUrl);
-
   await page.goto(jobUrl, { waitUntil: "domcontentloaded" });
 
-  await openApplicationForm(page);
+  const buttons = page.locator("button, a");
+  const btnCount = await buttons.count();
+
+  for (let i = 0; i < btnCount; i++) {
+    const text = (await buttons.nth(i).innerText()).toLowerCase();
+    if (text.includes("apply")) {
+      await buttons.nth(i).click();
+      await page.waitForTimeout(2500);
+      break;
+    }
+  }
 
   await smartFill(page, ["first"], FIRST_NAME);
   await smartFill(page, ["last"], LAST_NAME);
@@ -135,11 +132,11 @@ async function applyToGreenhouse(page, jobUrl, resumePath) {
 
   const fileInput = page.locator('input[type="file"]');
 
-  if (await fileInput.count()) {
-    await fileInput.first().setInputFiles(resumePath);
-  } else {
+  if (!(await fileInput.count())) {
     throw new Error("Resume upload field not found");
   }
+
+  await fileInput.first().setInputFiles(resumePath);
 
   const submitBtn = page.locator('button[type="submit"], input[type="submit"]');
 
@@ -148,14 +145,17 @@ async function applyToGreenhouse(page, jobUrl, resumePath) {
   }
 
   await submitBtn.first().click();
-
   await page.waitForTimeout(5000);
 
-  const success = await verifySubmission(page);
+  const pageContent = (await page.content()).toLowerCase();
 
-  if (!success) {
+  if (!pageContent.includes("thank") &&
+      !pageContent.includes("submitted") &&
+      !pageContent.includes("received")) {
     throw new Error("Submission not confirmed");
   }
+
+  return true;
 }
 
 /* ---------------- MAIN ---------------- */
@@ -199,10 +199,15 @@ async function run() {
 
     console.log(`Applying → ${company} | ${role}`);
 
-    try {
+    const resumePath =
+      await generateResumeForJob(jobId, jobDescription);
 
-      const resumePath =
-        await generateResumeForJob(jobId, jobDescription);
+    if (!resumePath) {
+      console.log("⏭ Skipping due to resume failure.");
+      continue;
+    }
+
+    try {
 
       await applyToGreenhouse(page, applyUrl, resumePath);
 
