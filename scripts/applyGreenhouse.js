@@ -39,20 +39,18 @@ async function getSheetsClient() {
   return google.sheets({ version: "v4", auth });
 }
 
-/* ---------------- SAFE FILE WAIT ---------------- */
+/* ---------------- FILE WAIT ---------------- */
 
 async function waitForFile(path, timeout = 20000) {
   const start = Date.now();
-
   while (Date.now() - start < timeout) {
     if (fs.existsSync(path)) return true;
     await new Promise(r => setTimeout(r, 500));
   }
-
   return false;
 }
 
-/* ---------------- RESUME GENERATION ---------------- */
+/* ---------------- RESUME ---------------- */
 
 async function generateResumeForJob(jobId, jobDescription) {
   try {
@@ -65,24 +63,19 @@ async function generateResumeForJob(jobId, jobDescription) {
     execSync("node scripts/generateResume.js", { stdio: "inherit" });
 
     const exists = await waitForFile("output/resume_output.pdf");
-
-    if (!exists) {
-      throw new Error("resume_output.pdf not created");
-    }
+    if (!exists) throw new Error("resume_output.pdf not created");
 
     const newFile = `output/resume_${jobId}.pdf`;
-
     fs.renameSync("output/resume_output.pdf", newFile);
 
     return newFile;
-
   } catch (err) {
     console.error("❌ Resume generation failed:", err.message);
     return null;
   }
 }
 
-/* ---------------- SMART FIELD FILL ---------------- */
+/* ---------------- SMART FILL ---------------- */
 
 async function smartFill(page, keywords, value) {
   const inputs = page.locator("input, textarea");
@@ -106,11 +99,49 @@ async function smartFill(page, keywords, value) {
   return false;
 }
 
-/* ---------------- APPLY LOGIC ---------------- */
+/* ---------------- SUCCESS DETECTION ---------------- */
+
+async function verifySubmission(page, originalUrl) {
+
+  await page.waitForLoadState("networkidle", { timeout: 7000 }).catch(() => {});
+
+  const currentUrl = page.url();
+
+  // 1️⃣ URL changed
+  if (currentUrl !== originalUrl) {
+    return true;
+  }
+
+  // 2️⃣ Form disappeared
+  const formExists = await page.locator("form").count();
+  if (!formExists) {
+    return true;
+  }
+
+  // 3️⃣ Validation errors visible
+  const errorText = (await page.content()).toLowerCase();
+  if (errorText.includes("required") ||
+      errorText.includes("error") ||
+      errorText.includes("invalid")) {
+    return false;
+  }
+
+  // 4️⃣ Success text
+  if (errorText.includes("thank") ||
+      errorText.includes("submitted") ||
+      errorText.includes("received")) {
+    return true;
+  }
+
+  return false;
+}
+
+/* ---------------- APPLY ---------------- */
 
 async function applyToGreenhouse(page, jobUrl, resumePath) {
 
   await page.goto(jobUrl, { waitUntil: "domcontentloaded" });
+  const originalUrl = page.url();
 
   const buttons = page.locator("button, a");
   const btnCount = await buttons.count();
@@ -131,7 +162,6 @@ async function applyToGreenhouse(page, jobUrl, resumePath) {
   await smartFill(page, ["linkedin"], LINKEDIN);
 
   const fileInput = page.locator('input[type="file"]');
-
   if (!(await fileInput.count())) {
     throw new Error("Resume upload field not found");
   }
@@ -139,19 +169,15 @@ async function applyToGreenhouse(page, jobUrl, resumePath) {
   await fileInput.first().setInputFiles(resumePath);
 
   const submitBtn = page.locator('button[type="submit"], input[type="submit"]');
-
   if (!(await submitBtn.count())) {
     throw new Error("Submit button not found");
   }
 
   await submitBtn.first().click();
-  await page.waitForTimeout(5000);
 
-  const pageContent = (await page.content()).toLowerCase();
+  const success = await verifySubmission(page, originalUrl);
 
-  if (!pageContent.includes("thank") &&
-      !pageContent.includes("submitted") &&
-      !pageContent.includes("received")) {
+  if (!success) {
     throw new Error("Submission not confirmed");
   }
 
@@ -202,10 +228,7 @@ async function run() {
     const resumePath =
       await generateResumeForJob(jobId, jobDescription);
 
-    if (!resumePath) {
-      console.log("⏭ Skipping due to resume failure.");
-      continue;
-    }
+    if (!resumePath) continue;
 
     try {
 
@@ -231,6 +254,8 @@ async function run() {
       });
 
       appliedCount++;
+
+      console.log("✅ Application confirmed.");
 
     } catch (err) {
       console.error("❌ Application failed:", err.message);
