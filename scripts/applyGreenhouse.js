@@ -1,6 +1,7 @@
 import { google } from "googleapis";
 import { chromium } from "playwright";
 import fs from "fs";
+import { execSync } from "child_process";
 
 const SERVICE_ACCOUNT = JSON.parse(process.env.GOOGLE_SERVICE_ACCOUNT);
 const spreadsheetId = "1VLZUQJh-lbzA2K4TtSQALgqgwWmnGmSHngKYQubG7Ng";
@@ -35,6 +36,27 @@ async function fillField(page, selectors, value) {
     }
   }
   return false;
+}
+
+async function generateResumeForJob(jobId, jobDescription) {
+  console.log(`Generating resume for ${jobId}`);
+
+  if (!fs.existsSync("output")) {
+    fs.mkdirSync("output");
+  }
+
+  fs.writeFileSync("data/job_description.txt", jobDescription);
+
+  execSync("node scripts/generateResume.js", { stdio: "inherit" });
+
+  const newFileName = `resume_${jobId}.pdf`;
+
+  fs.renameSync(
+    "output/resume_output.pdf",
+    `output/${newFileName}`
+  );
+
+  return `output/${newFileName}`;
 }
 
 async function applyToGreenhouse(page, jobUrl, resumePath) {
@@ -75,7 +97,7 @@ async function applyToGreenhouse(page, jobUrl, resumePath) {
 
   const resumeInput = page.locator('input[type="file"]');
   if (await resumeInput.count()) {
-    await resumeInput.first().setInputFiles("output/resume_output.pdf");
+    await resumeInput.first().setInputFiles(resumePath);
   }
 
   await fillField(page, [
@@ -85,6 +107,7 @@ async function applyToGreenhouse(page, jobUrl, resumePath) {
 
   const submitBtn = page.locator('button[type="submit"]');
   if (await submitBtn.count()) {
+    console.log("Submitting...");
     await submitBtn.first().click();
   }
 
@@ -128,21 +151,17 @@ async function run() {
       company,
       role,
       score,
-      decision,
-      strengths,
-      gaps,
-      reason,
-      dateScored,
-      resumeGenerated
+      decision
     ] = scoringRows[i];
 
     if (decision !== "APPLY") continue;
-    if (!resumeGenerated || resumeGenerated.toString().toUpperCase() !== "TRUE") continue;
 
     const intakeMatch = intakeRows.find(r => r[0] === jobId);
     if (!intakeMatch) continue;
 
     const applyUrl = intakeMatch[4];
+    const jobDescription = intakeMatch[5];
+
     if (!applyUrl || !applyUrl.includes("greenhouse.io")) continue;
 
     const appIndex = applicationRows.findIndex(r => r[0] === jobId);
@@ -158,30 +177,30 @@ async function run() {
     console.log(`Applying to ${company} - ${role}`);
 
     try {
-      await applyToGreenhouse(page, applyUrl);
+      const resumePath = await generateResumeForJob(jobId, jobDescription);
+
+      await applyToGreenhouse(page, applyUrl, resumePath);
 
       const today = new Date().toISOString();
 
-      if (appIndex === -1) {
-        await sheets.spreadsheets.values.append({
-          spreadsheetId,
-          range: "Applications!A1",
-          valueInputOption: "USER_ENTERED",
-          requestBody: {
-            values: [[
-              jobId,
-              company,
-              role,
-              "resume_output.pdf",
-              "",
-              today,
-              "SUBMITTED",
-              "",
-              ""
-            ]]
-          }
-        });
-      }
+      await sheets.spreadsheets.values.append({
+        spreadsheetId,
+        range: "Applications!A1",
+        valueInputOption: "USER_ENTERED",
+        requestBody: {
+          values: [[
+            jobId,
+            company,
+            role,
+            `resume_${jobId}.pdf`,
+            "",
+            today,
+            "SUBMITTED",
+            "",
+            ""
+          ]]
+        }
+      });
 
       appliedCount++;
 
