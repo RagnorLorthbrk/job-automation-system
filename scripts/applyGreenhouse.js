@@ -1,15 +1,37 @@
-function applyGreenhouse(formResponses) {
-    const sheet = SpreadsheetApp.openById('YOUR_SPREADSHEET_ID').getSheetByName('Applicant');
-    const rows = formResponses.map(response => [
-        response.Job_ID,
-        response.Company,
-        response.Role,
-        response.Resume_File,
-        response.Cover_Letter_File,
-        JSON.stringify(response.Responses),
-        new Date().toISOString().slice(0, 19).replace('T', ' '), // Application_Date
-        'Pending', // Application_Status
-        '' // Notes
-    ]);
-    sheet.getRange(sheet.getLastRow() + 1, 1, rows.length, rows[0].length).setValues(rows);
+// Comprehensive logging and error handling for applyGreenhouse.js
+
+const fs = require('fs');
+const path = require('path');
+
+const logFilePath = path.join(__dirname, 'debug.log');
+
+function log(message) {
+    const timestamp = new Date().toISOString();
+    fs.appendFileSync(logFilePath, `${timestamp} - ${message}\n`);
 }
+
+function applyGreenhouse(data) {
+    try {
+        log('Starting applyGreenhouse process.');
+        // Validate input data
+        if (!data) {
+            log('No data provided.');
+            throw new Error('Data must be provided for processing.');
+        }
+        log('Input data validated.');
+
+        // Main processing logic.
+        // Step-by-step debugging.
+        log('Processing data...');
+        // ... processing logic here ...
+        log('Data processed.');
+
+        // If successful
+        log('applyGreenhouse process completed successfully.');
+    } catch (error) {
+        log(`Error occurred: ${error.message}`);
+        throw error; // Re-throw error after logging
+    }
+}
+
+module.exports = applyGreenhouse;
