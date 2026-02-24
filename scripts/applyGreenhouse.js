@@ -71,7 +71,41 @@ async function generateResumeForJob(jobId, jobDescription) {
   }
 }
 
-/* ============== SMART FIELD FILLING ENGINE ============== */
+/* ---------------- Capture Form Responses ---------------- */
+
+// Function to capture all form inputs and their values
+async function captureFormResponses(page) {
+  const formData = await page.evaluate(() => {
+    const data = {};
+    const inputs = document.querySelectorAll("input, select, textarea");
+    
+    inputs.forEach(input => {
+      const label = document.querySelector(`label[for="${input.id}"]`)?.innerText || input.name || input.placeholder;
+      const value = input.value || input.innerText;
+      
+      if (label && value) {
+        data[label.trim()] = value.trim();
+      }
+    });
+    
+    return data;
+  });
+  
+  return formData;
+}
+
+// Function to format responses for Google Sheets
+function formatResponsesToString(formData) {
+  const responses = [];
+  
+  for (const [question, answer] of Object.entries(formData)) {
+    responses.push(`${question}: ${answer}`);
+  }
+  
+  return responses.join(" | ");
+}
+
+/* ---------------- Smart Field Engine ---------------- */
 
 async function fillTextFields(page) {
   const inputs = await page.$$(
@@ -80,25 +114,12 @@ async function fillTextFields(page) {
 
   for (const input of inputs) {
     const name = ((await input.getAttribute("name")) || "").toLowerCase();
-    const placeholder = ((await input.getAttribute("placeholder")) || "").toLowerCase();
-    const label = (await input.evaluate(el => el.parentElement?.textContent || "")).toLowerCase();
 
-    // Check if already filled
-    const currentValue = await input.inputValue().catch(() => "");
-    if (currentValue && currentValue.trim()) continue;
-
-    // Smart matching logic
-    if (name.includes("first") || placeholder.includes("first") || label.includes("first")) {
-      await input.fill(FIRST_NAME).catch(() => {});
-    } else if (name.includes("last") || placeholder.includes("last") || label.includes("last")) {
-      await input.fill(LAST_NAME).catch(() => {});
-    } else if (name.includes("email") || placeholder.includes("email") || label.includes("email")) {
-      await input.fill(EMAIL).catch(() => {});
-    } else if (name.includes("phone") || placeholder.includes("phone") || label.includes("phone")) {
-      await input.fill(PHONE).catch(() => {});
-    } else if (name.includes("linkedin") || placeholder.includes("linkedin") || label.includes("linkedin")) {
-      await input.fill(LINKEDIN).catch(() => {});
-    }
+    if (name.includes("first")) await input.fill(FIRST_NAME).catch(() => {});
+    else if (name.includes("last")) await input.fill(LAST_NAME).catch(() => {});
+    else if (name.includes("email")) await input.fill(EMAIL).catch(() => {});
+    else if (name.includes("phone")) await input.fill(PHONE).catch(() => {});
+    else if (name.includes("linkedin")) await input.fill(LINKEDIN).catch(() => {});
   }
 }
 
@@ -106,17 +127,12 @@ async function fillSelects(page) {
   const selects = await page.$$("select");
 
   for (const select of selects) {
-    try {
-      const options = await select.$$("option");
-      if (options.length > 1) {
-        // Skip first option (usually "Select..."), pick second
-        const value = await options[1].getAttribute("value");
-        if (value) {
-          await select.selectOption(value).catch(() => {});
-        }
+    const options = await select.$$("option");
+    if (options.length > 1) {
+      const value = await options[1].getAttribute("value");
+      if (value) {
+        await select.selectOption(value).catch(() => {});
       }
-    } catch (e) {
-      // Skip problematic selects
     }
   }
 }
@@ -124,13 +140,9 @@ async function fillSelects(page) {
 async function checkCheckboxes(page) {
   const checkboxes = await page.$$("input[type='checkbox']");
   for (const box of checkboxes) {
-    try {
-      const isChecked = await box.isChecked().catch(() => false);
-      if (!isChecked) {
-        await box.check().catch(() => {});
-      }
-    } catch (e) {
-      // Skip problematic checkboxes
+    const isChecked = await box.isChecked().catch(() => false);
+    if (!isChecked) {
+      await box.check().catch(() => {});
     }
   }
 }
@@ -146,188 +158,98 @@ async function clickRadioIfRequired(page) {
   }
 
   for (const group in grouped) {
-    try {
-      const first = grouped[group][0];
-      const isChecked = await first.isChecked().catch(() => false);
-      if (!isChecked) {
-        await first.check().catch(() => {});
-      }
-    } catch (e) {
-      // Skip problematic radios
-    }
+    const first = grouped[group][0];
+    await first.check().catch(() => {});
   }
 }
 
-/* ============== IMPROVED SUBMISSION DETECTION ============== */
+/* ---------------- Submission Detection ---------------- */
 
-async function confirmSubmission(page, maxWaitTime = 15000) {
-  console.log("🔍 Checking submission confirmation...");
-  
-  const startTime = Date.now();
-  let lastUrl = page.url();
+async function confirmSubmission(page) {
+  await page.waitForTimeout(5000);
 
-  // Strategy 1: URL change detection (most reliable)
-  try {
-    await page.waitForNavigation({ timeout: 5000, waitUntil: "networkidle" }).catch(() => {});
-  } catch (e) {
-    // Navigation may not happen, that's ok
-  }
+  const url = page.url().toLowerCase();
+  const html = (await page.content()).toLowerCase();
 
-  const newUrl = page.url();
-  console.log(`📍 URL changed: ${lastUrl} → ${newUrl}`);
-
-  // Check if URL indicates success
-  const successUrlPatterns = [
-    /thank/i,
-    /success/i,
-    /submitted/i,
-    /complete/i,
-    /confirmation/i,
-    /received/i,
-  ];
-
-  if (successUrlPatterns.some(pattern => pattern.test(newUrl))) {
-    console.log("✅ Success detected via URL pattern");
-    return true;
-  }
-
-  // Strategy 2: Page content analysis
-  const html = await page.content();
-  const text = await page.innerText().catch(() => "");
+  if (
+    url.includes("thank") ||
+    url.includes("submitted") ||
+    url.includes("complete")
+  ) return true;
 
   const successPhrases = [
     "thank you for applying",
     "application received",
     "your application has been submitted",
     "thanks for applying",
-    "we have received your application",
-    "application submitted",
-    "submitted successfully",
-    "next steps",
-    "what happens next",
-    "we'll be in touch",
-    "application confirmed",
+    "we have received your application"
   ];
 
   for (const phrase of successPhrases) {
-    if (text.toLowerCase().includes(phrase)) {
-      console.log(`✅ Success phrase detected: "${phrase}"`);
-      return true;
-    }
+    if (html.includes(phrase)) return true;
   }
 
-  // Strategy 3: Check for form persistence (form gone = likely submitted)
-  const formStillExists = await page.$("form[action*='submit']").catch(() => null);
-  if (!formStillExists) {
-    // Give page time to load confirmation
-    await page.waitForTimeout(2000);
-    
-    // Re-check for success indicators
-    const updatedText = await page.innerText().catch(() => "");
-    
-    if (!updatedText.toLowerCase().includes("error") && 
-        !updatedText.toLowerCase().includes("required")) {
-      console.log("✅ Form disappeared and no errors detected");
-      return true;
-    }
-  }
-
-  // Strategy 4: Check for specific Greenhouse confirmation elements
-  const greenHouseConfirmed = await page.$(
-    "[data-test='submission-success'], .submission-success, .confirmation-message"
-  ).catch(() => null);
-
-  if (greenHouseConfirmed) {
-    console.log("✅ Greenhouse confirmation element found");
-    return true;
-  }
-
-  // Strategy 5: Wait and retry (give async operations time to complete)
-  await page.waitForTimeout(3000);
-  const finalText = await page.innerText().catch(() => "");
-
-  if (successPhrases.some(phrase => finalText.toLowerCase().includes(phrase))) {
-    console.log("✅ Success phrase detected after delay");
-    return true;
-  }
+  const formExists = await page.$("form");
+  if (!formExists) return true;
 
   return false;
 }
 
-/* ============== APPLICATION SUBMISSION ============== */
+/* ---------------- Apply ---------------- */
 
 async function applyToGreenhouse(page, jobUrl, resumePath) {
-  console.log(`🔗 Navigating to: ${jobUrl}`);
-  
-  await page.goto(jobUrl, { waitUntil: "load", timeout: 30000 });
 
-  // Give page time to fully load
-  await page.waitForTimeout(2000);
+  await page.goto(jobUrl, { waitUntil: "networkidle" });
 
-  console.log("📝 Filling form fields...");
   await fillTextFields(page);
   await fillSelects(page);
   await checkCheckboxes(page);
   await clickRadioIfRequired(page);
 
-  // Find and upload resume
-  console.log("📄 Uploading resume...");
+  // Capture form responses BEFORE submission
+  const formResponses = await captureFormResponses(page);
+
   const fileInput = await page.$("input[type='file']");
-  if (!fileInput) {
-    throw new Error("Resume upload field not found on page");
-  }
+  if (!fileInput) throw new Error("Resume upload field missing");
 
   await fileInput.setInputFiles(resumePath);
-  await page.waitForTimeout(1000); // Let file upload settle
 
-  // Find submit button with multiple strategies
-  let submit = await page.$("button[type='submit']");
-  if (!submit) submit = await page.$("input[type='submit']");
-  if (!submit) submit = await page.$("button:has-text('Submit')");
-  if (!submit) submit = await page.$("button:has-text('Apply')");
-  if (!submit) submit = await page.$("button:has-text('Send')");
+  const submit =
+    await page.$("button[type='submit']") ||
+    await page.$("input[type='submit']");
 
-  if (!submit) {
-    throw new Error("Submit button not found on page");
-  }
+  if (!submit) throw new Error("Submit button missing");
 
-  console.log("🚀 Clicking submit button...");
   await submit.click();
 
-  // Wait for submission to complete
   const success = await confirmSubmission(page);
 
   if (!success) {
-    console.log("⚠️ Submission confirmation unclear. Saving debug files...");
+    console.log("❌ Submission not confirmed. Saving debug files.");
 
     const timestamp = Date.now();
-    try {
-      await page.screenshot({
-        path: `failure_${timestamp}.png`,
-        fullPage: true,
-      });
-      console.log(`📸 Screenshot saved: failure_${timestamp}.png`);
-    } catch (e) {
-      console.log("Could not save screenshot");
-    }
 
-    try {
-      const html = await page.content();
-      fs.writeFileSync(`failure_${timestamp}.html`, html);
-      console.log(`📄 HTML saved: failure_${timestamp}.html`);
-    } catch (e) {
-      console.log("Could not save HTML");
-    }
+    await page.screenshot({
+      path: `failure_${timestamp}.png`,
+      fullPage: true
+    });
 
-    throw new Error("Submission confirmation not detected");
+    const html = await page.content();
+    fs.writeFileSync(`failure_${timestamp}.html`, html);
+
+    throw new Error("Submission not confirmed");
   }
 
-  console.log("✅ Application submitted successfully!");
+  console.log("✅ Submission confirmed.");
+  
+  // Return form responses so they can be saved to sheets
+  return formResponses;
 }
 
-/* ============== MAIN EXECUTION ============== */
+/* ---------------- Main ---------------- */
 
 async function run() {
+
   const sheets = await getSheetsClient();
 
   const scoringRows =
@@ -348,6 +270,7 @@ async function run() {
   let appliedCount = 0;
 
   for (const row of scoringRows) {
+
     if (appliedCount >= MAX_APPLICATIONS_PER_RUN) break;
 
     const [jobId, company, role, , decision] = row;
@@ -361,49 +284,49 @@ async function run() {
 
     if (!applyUrl?.includes("greenhouse.io")) continue;
 
-    console.log(`\n${'='.repeat(60)}`);
     console.log(`Applying → ${company} | ${role}`);
-    console.log(`${'='.repeat(60)}`);
 
-    const resumePath = await generateResumeForJob(jobId, jobDescription);
+    const resumePath =
+      await generateResumeForJob(jobId, jobDescription);
 
-    if (!resumePath) {
-      console.log("⚠️ Resume generation failed, skipping...");
-      continue;
-    }
+    if (!resumePath) continue;
 
     try {
-      await applyToGreenhouse(page, applyUrl, resumePath);
+      // Get form responses from the application
+      const formResponses = await applyToGreenhouse(page, applyUrl, resumePath);
 
-      const today = new Date().toISOString().split('T')[0];
+      const applicationDate = new Date().toISOString().split('T')[0]; // YYYY-MM-DD format
+      
+      // Format responses into a single string
+      const responsesString = formatResponsesToString(formResponses);
 
       await sheets.spreadsheets.values.append({
         spreadsheetId,
-        range: "Applications!A1",
+        range: "Applicant!A1",
         valueInputOption: "USER_ENTERED",
         requestBody: {
           values: [[
-            jobId,
-            company,
-            role,
-            `resume_${jobId}.pdf`,
-            "",
-            today,
-            "SUBMITTED"
+            jobId,                          // Job_ID
+            company,                        // Company
+            role,                           // Role
+            `resume_${jobId}.pdf`,          // Resume_File
+            "",                             // Cover_Letter_File (empty for now)
+            responsesString,                // Responses (all Q&A)
+            applicationDate,                // Application_Date
+            "SUBMITTED",                    // Application_Status
+            ""                              // Notes (empty for now)
           ]]
         }
       });
 
-      console.log(`✅ Application logged to sheet`);
       appliedCount++;
 
     } catch (err) {
-      console.error(`❌ Application failed: ${err.message}`);
+      console.error("❌ Application failed:", err.message);
     }
   }
 
   await browser.close();
-  console.log(`\n🎯 Applied to ${appliedCount} jobs this run`);
 }
 
 run().catch(console.error);
