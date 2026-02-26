@@ -28,50 +28,34 @@ const master = JSON.parse(
 );
 
 const FIRST_NAME = master.personal.name.split(" ")[0];
-const LAST_NAME = master.personal.name.split(" ").slice(1).join(" ");
-const EMAIL = master.personal.email;
-const PHONE = master.personal.phone;
-const LINKEDIN = master.personal.linkedin;
+const LAST_NAME  = master.personal.name.split(" ").slice(1).join(" ");
+const EMAIL      = master.personal.email;
+const PHONE      = master.personal.phone;
+const LINKEDIN   = master.personal.linkedin;
 
-// ─── Fields we NEVER let AI touch ────────────────────────────────────────────
-// Honeypot fields, bot traps, reCAPTCHA, hidden tokens, etc.
+// ─── Fields AI must NEVER touch ──────────────────────────────────────────────
 const BLOCKED_FIELD_SIGNALS = [
-  "recaptcha",
-  "g-recaptcha",
-  "captcha",
-  "honeypot",
-  "bot",
-  "trap",
-  "token",
-  "csrf",
-  "trusting",
-  "adroit",
-  "hidden",
-  "sonstiges",       // German "other" — often a honeypot
-  "utm_",
-  "__jv",
+  "recaptcha", "g-recaptcha", "captcha",
+  "honeypot", "bot", "trap",
+  "token", "csrf",
+  "trusting", "adroit",
+  "sonstiges",   // German honeypot "other"
+  "utm_", "__jv",
 ];
 
-// ─── Standard fields filled by deterministic logic (English + German) ────────
-// AI skips any field whose label/name/id contains these signals
+// ─── Standard personal fields — filled deterministically, AI skips these ─────
+// These signals appear in name/id/label of personal fields (English + German)
 const STANDARD_FIELD_SIGNALS = [
-  // English
   "first name", "first_name", "firstname",
-  "last name", "last_name", "lastname",
+  "last name",  "last_name",  "lastname",
   "email", "e-mail",
   "phone", "telephone", "mobile",
   "linkedin",
   "resume", "cv", "attach", "upload", "cover letter",
   // German
-  "vorname",       // first name
-  "nachname",      // last name
-  "e-mail",
-  "telefon",       // phone
-  "lebenslauf",    // resume/CV
-  "anschreiben",   // cover letter
+  "vorname", "nachname", "telefon", "lebenslauf", "anschreiben",
 ];
 
-// Screenshot output dir
 const SCREENSHOT_DIR = "output/screenshots";
 if (!fs.existsSync(SCREENSHOT_DIR)) fs.mkdirSync(SCREENSHOT_DIR, { recursive: true });
 
@@ -120,45 +104,41 @@ async function generateResumeForJob(jobId, jobDescription) {
    HELPERS
 ───────────────────────────────────────────── */
 
-/**
- * Returns true if the combined field signals match any blocked pattern.
- * Used to skip honeypots, reCAPTCHA, hidden tokens.
- */
-function isBlockedField(combined) {
-  return BLOCKED_FIELD_SIGNALS.some(sig => combined.includes(sig));
-}
+function isBlocked(combined)  { return BLOCKED_FIELD_SIGNALS.some(s => combined.includes(s)); }
+function isStandard(combined) { return STANDARD_FIELD_SIGNALS.some(s => combined.includes(s)); }
 
 /**
- * Returns true if the combined field signals match a standard personal field.
- * Used to skip fields already handled by deterministic filling.
+ * Reads the visible label for any form element.
+ * Checks label[for=id] first, then nearest container label.
  */
-function isStandardField(combined) {
-  return STANDARD_FIELD_SIGNALS.some(sig => combined.includes(sig));
-}
-
-/**
- * Extracts the visible label text for a form element.
- * Tries label[for], then closest container label.
- */
-async function getLabelText(el) {
-  return el.evaluate(node => {
+async function getLabelText(elHandle) {
+  return elHandle.evaluate(node => {
     if (node.id) {
-      const label = document.querySelector(`label[for="${node.id}"]`);
-      if (label) return label.innerText.trim();
+      const lbl = document.querySelector(`label[for="${node.id}"]`);
+      if (lbl) return lbl.innerText.trim();
     }
     const parent = node.closest(
-      ".field, .form-group, .application-question, li, div, .s-grid-field"
+      ".field, .form-group, .application-question, li, .s-grid-field, div"
     );
     if (parent) {
-      const label = parent.querySelector("label");
-      if (label) return label.innerText.trim();
+      const lbl = parent.querySelector("label");
+      if (lbl) return lbl.innerText.trim();
     }
     return "";
   });
 }
 
+/**
+ * KEY FIX: Returns true if a given element handle is actually a <select>.
+ * Used inside the text-input loop to skip elements whose label happens
+ * to live inside a select's container — preventing text fill on dropdowns.
+ */
+async function isSelectElement(elHandle) {
+  return elHandle.evaluate(node => node.tagName.toLowerCase() === "select");
+}
+
 /* ─────────────────────────────────────────────
-   STANDARD FIELD FILLING (English + German)
+   STANDARD FIELD FILLING  (English + German)
 ───────────────────────────────────────────── */
 
 async function fillTextFields(page) {
@@ -174,53 +154,16 @@ async function fillTextFields(page) {
       const labelText   = (await getLabelText(input)).toLowerCase();
       const combined    = `${name} ${placeholder} ${id} ${labelText}`;
 
-      // Never touch blocked fields
-      if (isBlockedField(combined)) continue;
+      if (isBlocked(combined)) continue;
 
       const currentValue = await input.inputValue().catch(() => "");
       if (currentValue && currentValue.trim()) continue;
 
-      // English + German matching
-      if (/first.?name|firstname|vorname/.test(combined)) {
-        await input.fill(FIRST_NAME).catch(() => {});
-      } else if (/last.?name|lastname|nachname/.test(combined)) {
-        await input.fill(LAST_NAME).catch(() => {});
-      } else if (/e-?mail/.test(combined)) {
-        await input.fill(EMAIL).catch(() => {});
-      } else if (/phone|telefon|mobile|handynummer/.test(combined)) {
-        await input.fill(PHONE).catch(() => {});
-      } else if (/linkedin/.test(combined)) {
-        await input.fill(LINKEDIN).catch(() => {});
-      }
-    } catch (e) {}
-  }
-}
-
-/**
- * Fills standard <select> dropdowns that are personal fields
- * (e.g. country selects on standard forms).
- * Custom question selects are handled by AI in answerCustomQuestions().
- */
-async function fillStandardSelects(page) {
-  const selects = await page.$$("select");
-  for (const select of selects) {
-    try {
-      const name      = ((await select.getAttribute("name")) || "").toLowerCase();
-      const id        = ((await select.getAttribute("id"))   || "").toLowerCase();
-      const labelText = (await getLabelText(select)).toLowerCase();
-      const combined  = `${name} ${id} ${labelText}`;
-
-      if (isBlockedField(combined)) continue;
-
-      // Only auto-fill if it looks like a standard personal field
-      // Custom question selects (ASA, region, GDPR etc.) are left for AI
-      if (!isStandardField(combined)) continue;
-
-      const options = await select.$$("option");
-      if (options.length > 1) {
-        const value = await options[1].getAttribute("value");
-        if (value) await select.selectOption(value).catch(() => {});
-      }
+      if      (/first.?name|firstname|vorname/.test(combined))              await input.fill(FIRST_NAME).catch(() => {});
+      else if (/last.?name|lastname|nachname/.test(combined))               await input.fill(LAST_NAME).catch(() => {});
+      else if (/e-?mail/.test(combined))                                    await input.fill(EMAIL).catch(() => {});
+      else if (/phone|telefon|mobile|handynummer/.test(combined))           await input.fill(PHONE).catch(() => {});
+      else if (/linkedin/.test(combined))                                   await input.fill(LINKEDIN).catch(() => {});
     } catch (e) {}
   }
 }
@@ -229,10 +172,10 @@ async function checkCheckboxes(page) {
   const checkboxes = await page.$$("input[type='checkbox']");
   for (const box of checkboxes) {
     try {
-      const name      = ((await box.getAttribute("name")) || "").toLowerCase();
-      const id        = ((await box.getAttribute("id"))   || "").toLowerCase();
-      const combined  = `${name} ${id}`;
-      if (isBlockedField(combined)) continue;
+      const name     = ((await box.getAttribute("name")) || "").toLowerCase();
+      const id       = ((await box.getAttribute("id"))   || "").toLowerCase();
+      const combined = `${name} ${id}`;
+      if (isBlocked(combined)) continue;
       const isChecked = await box.isChecked().catch(() => false);
       if (!isChecked) await box.check().catch(() => {});
     } catch (e) {}
@@ -258,6 +201,8 @@ async function clickRadioIfRequired(page) {
 
 /* ─────────────────────────────────────────────
    AI QUESTION ANSWERING
+   TEXT INPUTS and SELECTS are handled in
+   completely separate passes — no overlap.
 ───────────────────────────────────────────── */
 
 async function answerCustomQuestions(page) {
@@ -267,36 +212,46 @@ async function answerCustomQuestions(page) {
 
   const qaLog = [];
 
-  // ── Text inputs & textareas ──────────────────────────────────────────────
-  const inputs = await page.$$(
+  // ── PASS 1: Text inputs and textareas only ───────────────────────────────
+  // We explicitly check tagName so a select's container label never
+  // causes a text fill attempt on the wrong element type.
+  const textInputs = await page.$$(
     "input[type='text'], input[type='url'], textarea"
   );
 
-  for (const input of inputs) {
+  for (const input of textInputs) {
     try {
+      // Double-check: skip anything that is actually a select (safety net)
+      if (await isSelectElement(input)) continue;
+
       const name        = ((await input.getAttribute("name"))        || "").toLowerCase();
       const placeholder = ((await input.getAttribute("placeholder")) || "").toLowerCase();
       const id          = ((await input.getAttribute("id"))          || "").toLowerCase();
       const labelText   = await getLabelText(input);
       const combined    = `${name} ${placeholder} ${id} ${labelText.toLowerCase()}`;
 
-      // Hard skip: blocked/honeypot fields
-      if (isBlockedField(combined)) {
-        console.log(`🚫 Skipping blocked field: "${labelText || name}"`);
-        continue;
-      }
+      if (isBlocked(combined))  { console.log(`🚫 Blocked field skipped: "${labelText || name}"`); continue; }
+      if (isStandard(combined)) continue; // already handled by fillTextFields
 
-      // Skip standard personal fields — already handled
-      if (isStandardField(combined)) continue;
-
-      // Skip if already filled
       const currentValue = await input.inputValue().catch(() => "");
       if (currentValue && currentValue.trim()) continue;
 
       const questionText = labelText || placeholder || name;
       if (!questionText || questionText.trim().length < 3) continue;
 
-      console.log(`🤖 AI answering: "${questionText}"`);
+      // ── CRITICAL CHECK: confirm this input does NOT belong to a select ──
+      // Some Greenhouse forms render a hidden text input alongside a <select>
+      // with the same label. We skip those.
+      const siblingSelect = await input.evaluate(node => {
+        const parent = node.closest(
+          ".field, .form-group, .application-question, li, .s-grid-field, div"
+        );
+        if (!parent) return false;
+        return parent.querySelector("select") !== null;
+      });
+      if (siblingSelect) continue; // let the select pass handle this question
+
+      console.log(`🤖 AI answering (text): "${questionText}"`);
       const answer = await generateAIAnswer(questionText, jobDescription);
 
       if (answer) {
@@ -307,7 +262,7 @@ async function answerCustomQuestions(page) {
     } catch (e) {}
   }
 
-  // ── Select dropdowns ─────────────────────────────────────────────────────
+  // ── PASS 2: Select dropdowns only ───────────────────────────────────────
   const selects = await page.$$("select");
 
   for (const select of selects) {
@@ -317,40 +272,38 @@ async function answerCustomQuestions(page) {
       const labelText = await getLabelText(select);
       const combined  = `${name} ${id} ${labelText.toLowerCase()}`;
 
-      // Hard skip: blocked/honeypot fields
-      if (isBlockedField(combined)) {
-        console.log(`🚫 Skipping blocked select: "${labelText || name}"`);
-        continue;
-      }
+      if (isBlocked(combined))  { console.log(`🚫 Blocked select skipped: "${labelText || name}"`); continue; }
 
-      // Skip standard personal fields — already handled by fillStandardSelects
-      if (isStandardField(combined)) continue;
-
-      // Get meaningful options (skip empty / placeholder options)
+      // Get all meaningful options (filter out placeholder entries)
       const options = await select.evaluate(el => {
         return Array.from(el.options)
           .map(o => ({ value: o.value, text: o.text.trim() }))
           .filter(o =>
             o.value &&
             o.text &&
-            !/^select|^choose|^auswählen|^wählen|^--/i.test(o.text)
+            !/^select|^choose|^auswählen|^wählen\s|^--/i.test(o.text)
           );
       });
 
       if (options.length === 0) continue;
 
-      // Check if already has a non-placeholder value selected
+      // Skip if already has a real value selected
       const currentVal = await select.evaluate(el => el.value);
-      if (currentVal && currentVal.trim()) continue;
+      if (currentVal && currentVal.trim() && currentVal !== "0") continue;
 
       const questionText = labelText || name;
       if (!questionText || questionText.trim().length < 3) continue;
 
-      console.log(`🤖 AI selecting for: "${questionText}"`);
+      console.log(`🤖 AI selecting (dropdown): "${questionText}"`);
       const bestOption = await pickBestSelectOption(questionText, options, jobDescription);
 
       if (bestOption) {
         await select.selectOption(bestOption).catch(() => {});
+        // Trigger change event so React/Vue forms register the selection
+        await select.evaluate(el => {
+          el.dispatchEvent(new Event("change", { bubbles: true }));
+          el.dispatchEvent(new Event("input",  { bubbles: true }));
+        });
         const selectedText = options.find(o => o.value === bestOption)?.text || bestOption;
         qaLog.push({ question: questionText, answer: selectedText });
         console.log(`   ✅ Selected: "${selectedText}"`);
@@ -360,6 +313,10 @@ async function answerCustomQuestions(page) {
 
   return qaLog;
 }
+
+/* ─────────────────────────────────────────────
+   OPENAI HELPERS
+───────────────────────────────────────────── */
 
 async function generateAIAnswer(question, jobDescription) {
   try {
@@ -380,31 +337,27 @@ ${jobDescription}
 
 RULES:
 - Answer ONLY the question asked. No preamble, no labels, no "Answer:".
-- Keep answers concise (1-4 sentences max unless clearly a long-form essay question).
-- For yes/no questions → answer "Yes" or "No" only.
-- For salary/compensation questions → answer: "Open to discussion based on the role and total package."
-- For notice period questions → answer: "30 days."
-- For work authorization / visa questions → answer: "I am based in India and open to fully remote roles globally."
-- For location/city questions → answer: "New Delhi, India."
-- For country questions → answer: "India."
-- For "why do you want to work here" type questions → write 2-3 relevant sentences using the job description.
-- For hobby/fun fact questions → write 1-2 genuine sentences based on the candidate profile.
-- For "how did you find us" questions → answer: "Through an online job board."
-- Never fabricate specific metrics not found in the candidate profile.
-- Sound professional and confident at all times.
+- Keep answers concise (1-4 sentences unless clearly a long-form essay question).
+- For yes/no questions → "Yes" or "No" only.
+- For salary/compensation → "Open to discussion based on the role and total package."
+- For notice period → "30 days."
+- For work authorization / visa → "I am based in India and open to fully remote roles globally."
+- For location/city → "New Delhi, India."
+- For country → "India."
+- For "why do you want to work here" → 2-3 relevant sentences using the job description.
+- For hobby/fun fact → 1-2 genuine sentences based on the candidate profile.
+- For "how did you find us" → "Through an online job board."
+- Never fabricate metrics not in the candidate profile.
 - If the question is in German, answer in German.
+- Sound professional and confident.
 `
         },
-        {
-          role: "user",
-          content: `Question: ${question}`
-        }
+        { role: "user", content: `Question: ${question}` }
       ]
     });
-
     return response.choices[0].message.content.trim();
   } catch (err) {
-    console.error(`❌ AI answer failed for "${question}":`, err.message);
+    console.error(`❌ AI text answer failed for "${question}":`, err.message);
     return null;
   }
 }
@@ -428,9 +381,9 @@ ${JSON.stringify(master)}
 JOB DESCRIPTION:
 ${jobDescription}
 
-You will be given a dropdown question and its available options.
-Respond ONLY with the exact value string of the best matching option. Nothing else.
-No explanation. No quotes around your answer unless the value itself contains quotes.
+You will receive a dropdown question and its available options.
+Respond ONLY with the exact value string of the best matching option.
+No explanation. No quotes. Just the raw value string.
 `
         },
         {
@@ -441,24 +394,17 @@ No explanation. No quotes around your answer unless the value itself contains qu
     });
 
     const picked = response.choices[0].message.content.trim().replace(/^"|"$/g, "");
-    const valid = options.find(o => o.value === picked);
-    // If AI returned something invalid, fall back to first real option
-    return valid ? picked : options[0].value;
+    const valid  = options.find(o => o.value === picked);
+    return valid ? picked : options[0].value; // fallback to first real option
   } catch (err) {
     console.error(`❌ AI select failed for "${question}":`, err.message);
     return options[0]?.value || null;
   }
 }
 
-/**
- * Formats Q&A array into a readable string for Col F (Responses).
- * Format: Q: <question> | A: <answer> || Q: <question> | A: <answer>
- */
 function formatQAForSheet(qaLog) {
   if (!qaLog || qaLog.length === 0) return "No custom questions detected";
-  return qaLog
-    .map(qa => `Q: ${qa.question} | A: ${qa.answer}`)
-    .join(" || ");
+  return qaLog.map(qa => `Q: ${qa.question} | A: ${qa.answer}`).join(" || ");
 }
 
 /* ─────────────────────────────────────────────
@@ -476,7 +422,6 @@ async function scrapeFormErrors(page) {
       '.alert-danger',
       '[role="alert"]',
     ];
-
     const errors = [];
     selectors.forEach(sel => {
       document.querySelectorAll(sel).forEach(el => {
@@ -484,7 +429,6 @@ async function scrapeFormErrors(page) {
         if (text) errors.push({ selector: sel, text });
       });
     });
-
     document.querySelectorAll("input, select, textarea").forEach(field => {
       if (!field.validity.valid) {
         errors.push({
@@ -494,7 +438,6 @@ async function scrapeFormErrors(page) {
         });
       }
     });
-
     return errors;
   });
 }
@@ -515,15 +458,10 @@ function waitForCondition(conditionFn, timeout) {
     const interval = 200;
     let elapsed = 0;
     const timer = setInterval(() => {
-      if (conditionFn()) {
-        clearInterval(timer);
-        resolve();
-      } else {
+      if (conditionFn()) { clearInterval(timer); resolve(); }
+      else {
         elapsed += interval;
-        if (elapsed >= timeout) {
-          clearInterval(timer);
-          reject(new Error("Condition timeout"));
-        }
+        if (elapsed >= timeout) { clearInterval(timer); reject(new Error("timeout")); }
       }
     }, interval);
   });
@@ -531,113 +469,96 @@ function waitForCondition(conditionFn, timeout) {
 
 async function detectConfirmationPage(page) {
   return page.evaluate(() => {
-    const confirmationSelectors = [
+    const selectors = [
       '[class*="confirmation"]', '[class*="success"]', '[class*="thank"]',
-      '[id*="confirmation"]', '[id*="success"]',
+      '[id*="confirmation"]',   '[id*="success"]',
       '[data-test="submission-success"]', '.submission-success', '.confirmation-message',
     ];
-    const confirmationPhrases = [
+    const phrases = [
       "application received", "thank you for applying", "successfully submitted",
       "your application has been", "we have received your application",
       "thanks for applying", "next steps", "what happens next", "we'll be in touch",
-      // German
       "bewerbung erhalten", "vielen dank für ihre bewerbung", "erfolgreich eingereicht",
     ];
-    const bodyText = document.body.innerText.toLowerCase();
+    const body = document.body.innerText.toLowerCase();
     return (
-      confirmationPhrases.some(p => bodyText.includes(p)) ||
-      confirmationSelectors.some(sel => document.querySelector(sel) !== null)
+      phrases.some(p => body.includes(p)) ||
+      selectors.some(s => document.querySelector(s) !== null)
     );
   });
 }
 
-/**
- * Attaches network listeners BEFORE the submit click.
- * Returns success=true ONLY when a real HTTP response from
- * a Greenhouse submission endpoint is confirmed.
- * Google Sheets is NEVER updated unless this returns success=true.
- */
 async function validateSubmission(page, clickAction, timeout = 15000) {
-  let submissionRequest = null;
+  let submissionRequest  = null;
   let submissionResponse = null;
 
-  const requestHandler = request => {
+  const onRequest = req => {
     if (
-      (request.method() === "POST" || request.method() === "PUT") &&
-      GREENHOUSE_SUBMISSION_PATTERNS.some(re => re.test(request.url()))
+      (req.method() === "POST" || req.method() === "PUT") &&
+      GREENHOUSE_SUBMISSION_PATTERNS.some(re => re.test(req.url()))
     ) {
-      submissionRequest = { url: request.url(), method: request.method(), timestamp: Date.now() };
-      console.log(`🌐 [Network] Submission request → ${request.url()}`);
+      submissionRequest = { url: req.url(), method: req.method(), timestamp: Date.now() };
+      console.log(`🌐 [Network] Submission request → ${req.url()}`);
     }
   };
 
-  const responseHandler = response => {
-    if (submissionRequest && response.url() === submissionRequest.url && !submissionResponse) {
-      submissionResponse = { url: response.url(), status: response.status(), timestamp: Date.now() };
-      console.log(`🌐 [Network] Submission response → HTTP ${response.status()}`);
+  const onResponse = res => {
+    if (submissionRequest && res.url() === submissionRequest.url && !submissionResponse) {
+      submissionResponse = { url: res.url(), status: res.status(), timestamp: Date.now() };
+      console.log(`🌐 [Network] Submission response → HTTP ${res.status()}`);
     }
   };
 
-  page.on("request", requestHandler);
-  page.on("response", responseHandler);
+  page.on("request",  onRequest);
+  page.on("response", onResponse);
 
-  const preClickErrors = await scrapeFormErrors(page);
-  if (preClickErrors.length > 0) {
-    console.warn(`⚠️ Pre-click validation errors (${preClickErrors.length} fields not filled):`);
-    // Deduplicate for cleaner logs
-    const unique = [...new Set(preClickErrors.map(e => e.text))];
+  const preErrors = await scrapeFormErrors(page);
+  if (preErrors.length > 0) {
+    const unique = [...new Set(preErrors.map(e => e.text))];
+    console.warn(`⚠️ Pre-click unfilled fields (${unique.length}):`);
     unique.forEach(t => console.warn(`   • ${t}`));
   }
 
   const urlBefore = page.url();
-  try {
-    await clickAction();
-  } catch (err) {
-    console.error("❌ Submit click threw:", err.message);
-  }
+  try { await clickAction(); } catch (err) { console.error("❌ Click threw:", err.message); }
 
   let timedOut = false;
-  await waitForCondition(() => submissionResponse !== null, timeout).catch(() => { timedOut = true; });
+  await waitForCondition(() => submissionResponse !== null, timeout)
+    .catch(() => { timedOut = true; });
 
-  const postClickErrors = await scrapeFormErrors(page);
-  const urlAfter = page.url();
-  const urlChanged = urlAfter !== urlBefore;
+  const postErrors          = await scrapeFormErrors(page);
+  const urlAfter            = page.url();
+  const urlChanged          = urlAfter !== urlBefore;
   const confirmationDetected = await detectConfirmationPage(page);
 
   const screenshotPath = `${SCREENSHOT_DIR}/submit_${Date.now()}.png`;
   try {
     await page.screenshot({ path: screenshotPath, fullPage: true });
     console.log(`📸 Screenshot → ${screenshotPath}`);
-  } catch (e) {
-    console.log("⚠️ Could not save screenshot");
-  }
+  } catch (e) {}
 
-  page.off("request", requestHandler);
-  page.off("response", responseHandler);
+  page.off("request",  onRequest);
+  page.off("response", onResponse);
 
   let success = false;
-  let reason = "";
+  let reason  = "";
 
   if (submissionResponse) {
-    const status = submissionResponse.status;
-    if (status >= 200 && status < 400) {
-      success = true;
-      reason = `Network POST confirmed — HTTP ${status}`;
-    } else {
-      reason = `Network POST received HTTP ${status} — rejected by server`;
-    }
+    const s = submissionResponse.status;
+    if (s >= 200 && s < 400) { success = true; reason = `Network POST confirmed — HTTP ${s}`; }
+    else                     { reason = `Network POST received HTTP ${s} — rejected by server`; }
   } else if (confirmationDetected) {
     success = true;
-    reason = "Confirmation page/element detected in DOM";
+    reason  = "Confirmation page/element detected in DOM";
   } else if (timedOut && !submissionRequest) {
     reason = "No submission network request detected — form was NOT submitted";
   } else if (timedOut && submissionRequest) {
-    reason = "Submission request sent but no server response within timeout";
+    reason = "Request sent but no server response within timeout";
   } else {
     reason = "No submission network request detected — form was NOT submitted";
   }
 
-  const newErrors = postClickErrors.filter(e => !preClickErrors.some(p => p.text === e.text));
+  const newErrors = postErrors.filter(e => !preErrors.some(p => p.text === e.text));
   if (success && newErrors.length > 0) {
     success = false;
     reason += " | Overridden: new DOM validation errors after click";
@@ -649,8 +570,8 @@ async function validateSubmission(page, clickAction, timeout = 15000) {
   console.log(`Network : request=${!!submissionRequest} | response=${!!submissionResponse} | HTTP=${submissionResponse?.status ?? "none"}`);
   console.log(`URL     : changed=${urlChanged}`);
   if (newErrors.length > 0) {
-    console.log("Unfilled required fields after click:");
     const uniqueNew = [...new Set(newErrors.map(e => e.text))];
+    console.log("Still unfilled after click:");
     uniqueNew.forEach(t => console.log(`  • ${t}`));
   }
   console.log("========================================\n");
@@ -664,18 +585,18 @@ async function validateSubmission(page, clickAction, timeout = 15000) {
 
 async function applyToGreenhouse(page, jobUrl, resumePath) {
   console.log(`🔗 Navigating to: ${jobUrl}`);
-
   await page.goto(jobUrl, { waitUntil: "load", timeout: 30000 });
   await page.waitForTimeout(2000);
 
-  // 1. Fill standard personal fields (English + German)
+  // 1. Standard personal fields (English + German)
   console.log("📝 Filling standard fields...");
   await fillTextFields(page);
-  await fillStandardSelects(page);
   await checkCheckboxes(page);
   await clickRadioIfRequired(page);
 
-  // 2. AI answers all custom questions (text + dropdowns)
+  // 2. AI answers all custom questions
+  //    Pass 1 = text inputs (skips any that have a sibling <select>)
+  //    Pass 2 = select dropdowns (exclusively handled here)
   console.log("🤖 Scanning for custom questions...");
   const qaLog = await answerCustomQuestions(page);
   console.log(`🤖 Custom questions answered: ${qaLog.length}`);
@@ -683,19 +604,19 @@ async function applyToGreenhouse(page, jobUrl, resumePath) {
   // 3. Upload resume
   console.log("📄 Uploading resume...");
   const fileInput = await page.$("input[type='file']");
-  if (!fileInput) throw new Error("Resume upload field not found on page");
+  if (!fileInput) throw new Error("Resume upload field not found");
   await fileInput.setInputFiles(resumePath);
   await page.waitForTimeout(1000);
 
-  // 4. Find submit button
+  // 4. Find submit button (English + German)
   let submit = await page.$("button[type='submit']");
   if (!submit) submit = await page.$("input[type='submit']");
   if (!submit) submit = await page.$("button:has-text('Submit')");
   if (!submit) submit = await page.$("button:has-text('Apply')");
   if (!submit) submit = await page.$("button:has-text('Send')");
-  if (!submit) submit = await page.$("button:has-text('Absenden')");   // German
-  if (!submit) submit = await page.$("button:has-text('Bewerben')");   // German "Apply"
-  if (!submit) throw new Error("Submit button not found on page");
+  if (!submit) submit = await page.$("button:has-text('Absenden')");
+  if (!submit) submit = await page.$("button:has-text('Bewerben')");
+  if (!submit) throw new Error("Submit button not found");
 
   // 5. Submit with network-layer validation
   console.log("🚀 Clicking submit — monitoring network...");
@@ -703,9 +624,7 @@ async function applyToGreenhouse(page, jobUrl, resumePath) {
     await submit.click();
   });
 
-  if (!result.success) {
-    throw new Error(`Submission not confirmed: ${result.reason}`);
-  }
+  if (!result.success) throw new Error(`Submission not confirmed: ${result.reason}`);
 
   console.log("✅ Application submitted successfully!");
   return { result, qaLog };
@@ -720,18 +639,16 @@ async function run() {
 
   const scoringRows =
     (await sheets.spreadsheets.values.get({
-      spreadsheetId,
-      range: "Scoring!A2:J",
+      spreadsheetId, range: "Scoring!A2:J",
     })).data.values || [];
 
   const intakeRows =
     (await sheets.spreadsheets.values.get({
-      spreadsheetId,
-      range: "Job Intake!A2:I",
+      spreadsheetId, range: "Job Intake!A2:I",
     })).data.values || [];
 
   const browser = await chromium.launch({ headless: true });
-  const page = await browser.newPage();
+  const page    = await browser.newPage();
 
   let appliedCount = 0;
 
@@ -744,7 +661,7 @@ async function run() {
     const intake = intakeRows.find(r => r[0] === jobId);
     if (!intake) continue;
 
-    const applyUrl = intake[4];
+    const applyUrl       = intake[4];
     const jobDescription = intake[5];
 
     if (!applyUrl?.includes("greenhouse.io")) continue;
@@ -754,18 +671,14 @@ async function run() {
     console.log(`${"=".repeat(60)}`);
 
     const resumePath = await generateResumeForJob(jobId, jobDescription);
-
-    if (!resumePath) {
-      console.log("⚠️ Resume generation failed, skipping...");
-      continue;
-    }
+    if (!resumePath) { console.log("⚠️ Resume generation failed, skipping..."); continue; }
 
     try {
       const { result, qaLog } = await applyToGreenhouse(page, applyUrl, resumePath);
 
       // ✅ Only reaches here on confirmed network-layer submission
-      const today = new Date().toISOString().split("T")[0];
-      const responsesForSheet = formatQAForSheet(qaLog);
+      const today              = new Date().toISOString().split("T")[0];
+      const responsesForSheet  = formatQAForSheet(qaLog);
 
       await sheets.spreadsheets.values.append({
         spreadsheetId,
@@ -773,15 +686,15 @@ async function run() {
         valueInputOption: "USER_ENTERED",
         requestBody: {
           values: [[
-            jobId,                  // Col A: Job_ID
-            company,                // Col B: Company
-            role,                   // Col C: Role
-            `resume_${jobId}.pdf`,  // Col D: Resume_File
-            "",                     // Col E: Cover_Letter_File (unused)
-            responsesForSheet,      // Col F: Responses ← AI Q&A log
-            today,                  // Col G: Application_Date
-            "SUBMITTED",            // Col H: Application_Status
-            result.reason           // Col I: Notes ← network confirmation detail
+            jobId,                 // Col A: Job_ID
+            company,               // Col B: Company
+            role,                  // Col C: Role
+            `resume_${jobId}.pdf`, // Col D: Resume_File
+            "",                    // Col E: Cover_Letter_File (unused)
+            responsesForSheet,     // Col F: Responses ← AI Q&A log
+            today,                 // Col G: Application_Date
+            "SUBMITTED",           // Col H: Application_Status
+            result.reason          // Col I: Notes
           ]]
         }
       });
@@ -792,7 +705,7 @@ async function run() {
 
     } catch (err) {
       console.error(`❌ Application failed: ${err.message}`);
-      // NOT logging to sheet — submission was not confirmed
+      // NOT logging to sheet — submission unconfirmed
     }
   }
 
