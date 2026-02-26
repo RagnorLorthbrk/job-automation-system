@@ -1,5 +1,6 @@
 import { google } from "googleapis";
 import { chromium } from "playwright";
+import OpenAI from "openai";
 import fs from "fs";
 import { execSync } from "child_process";
 
@@ -18,6 +19,10 @@ if (!process.env.GOOGLE_SERVICE_ACCOUNT) {
 
 const SERVICE_ACCOUNT = JSON.parse(process.env.GOOGLE_SERVICE_ACCOUNT);
 
+const openai = new OpenAI({
+  apiKey: process.env.OPENAI_API_KEY,
+});
+
 const master = JSON.parse(
   fs.readFileSync("data/master_resume.json", "utf-8")
 );
@@ -28,23 +33,36 @@ const EMAIL = master.personal.email;
 const PHONE = master.personal.phone;
 const LINKEDIN = master.personal.linkedin;
 
-/* ---------------- Sheets ---------------- */
+// Standard fields filled manually — AI skips these
+const STANDARD_FIELD_SIGNALS = [
+  "first", "last", "email", "phone", "linkedin",
+  "resume", "cv", "attach", "upload", "cover letter"
+];
+
+// Screenshot output dir
+const SCREENSHOT_DIR = "output/screenshots";
+if (!fs.existsSync(SCREENSHOT_DIR)) fs.mkdirSync(SCREENSHOT_DIR, { recursive: true });
+
+/* ─────────────────────────────────────────────
+   SHEETS CLIENT
+───────────────────────────────────────────── */
 
 async function getSheetsClient() {
   const auth = new google.auth.GoogleAuth({
     credentials: SERVICE_ACCOUNT,
     scopes: ["https://www.googleapis.com/auth/spreadsheets"],
   });
-
   return google.sheets({ version: "v4", auth });
 }
 
-/* ---------------- Resume ---------------- */
+/* ─────────────────────────────────────────────
+   RESUME GENERATION
+───────────────────────────────────────────── */
 
-async function waitForFile(path, timeout = 20000) {
+async function waitForFile(filePath, timeout = 20000) {
   const start = Date.now();
   while (Date.now() - start < timeout) {
-    if (fs.existsSync(path)) return true;
+    if (fs.existsSync(filePath)) return true;
     await new Promise(r => setTimeout(r, 500));
   }
   return false;
@@ -71,7 +89,9 @@ async function generateResumeForJob(jobId, jobDescription) {
   }
 }
 
-/* ============== SMART FIELD FILLING ENGINE ============== */
+/* ─────────────────────────────────────────────
+   STANDARD FIELD FILLING
+───────────────────────────────────────────── */
 
 async function fillTextFields(page) {
   const inputs = await page.$$(
@@ -83,14 +103,12 @@ async function fillTextFields(page) {
     const placeholder = ((await input.getAttribute("placeholder")) || "").toLowerCase();
     const label = (await input.evaluate(el => el.parentElement?.textContent || "")).toLowerCase();
 
-    // Check if already filled
     const currentValue = await input.inputValue().catch(() => "");
     if (currentValue && currentValue.trim()) continue;
 
-    // Smart matching logic
-    if (name.includes("first") || placeholder.includes("first") || label.includes("first")) {
+    if (name.includes("first") || placeholder.includes("first") || label.includes("first name")) {
       await input.fill(FIRST_NAME).catch(() => {});
-    } else if (name.includes("last") || placeholder.includes("last") || label.includes("last")) {
+    } else if (name.includes("last") || placeholder.includes("last") || label.includes("last name")) {
       await input.fill(LAST_NAME).catch(() => {});
     } else if (name.includes("email") || placeholder.includes("email") || label.includes("email")) {
       await input.fill(EMAIL).catch(() => {});
@@ -104,20 +122,14 @@ async function fillTextFields(page) {
 
 async function fillSelects(page) {
   const selects = await page.$$("select");
-
   for (const select of selects) {
     try {
       const options = await select.$$("option");
       if (options.length > 1) {
-        // Skip first option (usually "Select..."), pick second
         const value = await options[1].getAttribute("value");
-        if (value) {
-          await select.selectOption(value).catch(() => {});
-        }
+        if (value) await select.selectOption(value).catch(() => {});
       }
-    } catch (e) {
-      // Skip problematic selects
-    }
+    } catch (e) {}
   }
 }
 
@@ -126,206 +138,481 @@ async function checkCheckboxes(page) {
   for (const box of checkboxes) {
     try {
       const isChecked = await box.isChecked().catch(() => false);
-      if (!isChecked) {
-        await box.check().catch(() => {});
-      }
-    } catch (e) {
-      // Skip problematic checkboxes
-    }
+      if (!isChecked) await box.check().catch(() => {});
+    } catch (e) {}
   }
 }
 
 async function clickRadioIfRequired(page) {
   const radios = await page.$$("input[type='radio']");
   const grouped = {};
-
   for (const radio of radios) {
     const name = await radio.getAttribute("name");
     if (!grouped[name]) grouped[name] = [];
     grouped[name].push(radio);
   }
-
   for (const group in grouped) {
     try {
       const first = grouped[group][0];
       const isChecked = await first.isChecked().catch(() => false);
-      if (!isChecked) {
-        await first.check().catch(() => {});
+      if (!isChecked) await first.check().catch(() => {});
+    } catch (e) {}
+  }
+}
+
+/* ─────────────────────────────────────────────
+   AI QUESTION ANSWERING
+───────────────────────────────────────────── */
+
+/**
+ * Scans the form for custom open-ended questions,
+ * sends each to OpenAI with resume + JD context,
+ * fills the answer, and returns a Q&A log for the sheet.
+ */
+async function answerCustomQuestions(page) {
+  const jobDescription = fs.existsSync("data/job_description.txt")
+    ? fs.readFileSync("data/job_description.txt", "utf-8")
+    : "";
+
+  const qaLog = [];
+
+  // Handle text inputs and textareas
+  const inputs = await page.$$("input[type='text'], input[type='url'], textarea");
+
+  for (const input of inputs) {
+    try {
+      const name = ((await input.getAttribute("name")) || "").toLowerCase();
+      const placeholder = ((await input.getAttribute("placeholder")) || "").toLowerCase();
+      const id = ((await input.getAttribute("id")) || "").toLowerCase();
+
+      // Extract label from DOM
+      const labelText = await input.evaluate(el => {
+        if (el.id) {
+          const label = document.querySelector(`label[for="${el.id}"]`);
+          if (label) return label.innerText.trim();
+        }
+        const parent = el.closest(".field, .form-group, .application-question, li, div");
+        if (parent) {
+          const label = parent.querySelector("label");
+          if (label) return label.innerText.trim();
+        }
+        return "";
+      });
+
+      const combined = (name + " " + placeholder + " " + id + " " + labelText).toLowerCase();
+
+      // Skip standard fields
+      if (STANDARD_FIELD_SIGNALS.some(sig => combined.includes(sig))) continue;
+
+      // Skip if already filled
+      const currentValue = await input.inputValue().catch(() => "");
+      if (currentValue && currentValue.trim()) continue;
+
+      const questionText = labelText || placeholder || name;
+      if (!questionText || questionText.length < 3) continue;
+
+      console.log(`🤖 AI answering: "${questionText}"`);
+
+      const answer = await generateAIAnswer(questionText, jobDescription);
+
+      if (answer) {
+        await input.fill(answer).catch(() => {});
+        qaLog.push({ question: questionText, answer });
+        console.log(`   ✅ "${answer.substring(0, 80)}${answer.length > 80 ? "..." : ""}"`);
       }
-    } catch (e) {
-      // Skip problematic radios
-    }
+    } catch (e) {}
   }
+
+  // Handle select dropdowns with meaningful labels
+  const selects = await page.$$("select");
+  for (const select of selects) {
+    try {
+      const id = ((await select.getAttribute("id")) || "").toLowerCase();
+      const name = ((await select.getAttribute("name")) || "").toLowerCase();
+
+      const labelText = await select.evaluate(el => {
+        if (el.id) {
+          const label = document.querySelector(`label[for="${el.id}"]`);
+          if (label) return label.innerText.trim();
+        }
+        const parent = el.closest(".field, .form-group, .application-question, li, div");
+        if (parent) {
+          const label = parent.querySelector("label");
+          if (label) return label.innerText.trim();
+        }
+        return "";
+      });
+
+      const combined = (name + " " + id + " " + labelText).toLowerCase();
+      if (STANDARD_FIELD_SIGNALS.some(sig => combined.includes(sig))) continue;
+
+      const options = await select.evaluate(el => {
+        return Array.from(el.options).map(o => ({
+          value: o.value,
+          text: o.text.trim()
+        })).filter(o => o.value && o.text && o.text.toLowerCase() !== "select...");
+      });
+
+      if (options.length === 0) continue;
+
+      const questionText = labelText || name;
+      if (!questionText || questionText.length < 3) continue;
+
+      console.log(`🤖 AI selecting for: "${questionText}"`);
+
+      const bestOption = await pickBestSelectOption(questionText, options, jobDescription);
+
+      if (bestOption) {
+        await select.selectOption(bestOption).catch(() => {});
+        const selectedText = options.find(o => o.value === bestOption)?.text || bestOption;
+        qaLog.push({ question: questionText, answer: selectedText });
+        console.log(`   ✅ Selected: "${selectedText}"`);
+      }
+    } catch (e) {}
+  }
+
+  return qaLog;
 }
 
-/* ============== IMPROVED SUBMISSION DETECTION ============== */
-
-async function confirmSubmission(page, maxWaitTime = 15000) {
-  console.log("🔍 Checking submission confirmation...");
-  
-  const startTime = Date.now();
-  let lastUrl = page.url();
-
-  // Strategy 1: URL change detection (most reliable)
+async function generateAIAnswer(question, jobDescription) {
   try {
-    await page.waitForNavigation({ timeout: 5000, waitUntil: "networkidle" }).catch(() => {});
-  } catch (e) {
-    // Navigation may not happen, that's ok
+    const response = await openai.chat.completions.create({
+      model: "gpt-4o-mini",
+      temperature: 0.3,
+      messages: [
+        {
+          role: "system",
+          content: `
+You are filling out a job application on behalf of this candidate.
+
+CANDIDATE PROFILE:
+${JSON.stringify(master)}
+
+JOB DESCRIPTION:
+${jobDescription}
+
+RULES:
+- Answer ONLY the question asked. No preamble, no labels, no "Answer:".
+- Keep answers concise (1-4 sentences max unless clearly a long-form essay question).
+- For yes/no questions, answer "Yes" or "No" only.
+- For salary/compensation questions, answer: "Open to discussion based on the role and total package."
+- For notice period questions, answer: "30 days."
+- For work authorization / visa questions, answer: "I am based in India and open to fully remote roles globally."
+- For "why do you want to work here" type questions, write 2-3 relevant sentences using the job description.
+- Never fabricate metrics not found in the candidate profile.
+- Sound professional and confident at all times.
+`
+        },
+        {
+          role: "user",
+          content: `Question: ${question}`
+        }
+      ]
+    });
+
+    return response.choices[0].message.content.trim();
+  } catch (err) {
+    console.error(`❌ AI answer failed for "${question}":`, err.message);
+    return null;
   }
-
-  const newUrl = page.url();
-  console.log(`📍 URL changed: ${lastUrl} → ${newUrl}`);
-
-  // Check if URL indicates success
-  const successUrlPatterns = [
-    /thank/i,
-    /success/i,
-    /submitted/i,
-    /complete/i,
-    /confirmation/i,
-    /received/i,
-  ];
-
-  if (successUrlPatterns.some(pattern => pattern.test(newUrl))) {
-    console.log("✅ Success detected via URL pattern");
-    return true;
-  }
-
-  // Strategy 2: Page content analysis
-  const html = await page.content();
-  const text = await page.innerText().catch(() => "");
-
-  const successPhrases = [
-    "thank you for applying",
-    "application received",
-    "your application has been submitted",
-    "thanks for applying",
-    "we have received your application",
-    "application submitted",
-    "submitted successfully",
-    "next steps",
-    "what happens next",
-    "we'll be in touch",
-    "application confirmed",
-  ];
-
-  for (const phrase of successPhrases) {
-    if (text.toLowerCase().includes(phrase)) {
-      console.log(`✅ Success phrase detected: "${phrase}"`);
-      return true;
-    }
-  }
-
-  // Strategy 3: Check for form persistence (form gone = likely submitted)
-  const formStillExists = await page.$("form[action*='submit']").catch(() => null);
-  if (!formStillExists) {
-    // Give page time to load confirmation
-    await page.waitForTimeout(2000);
-    
-    // Re-check for success indicators
-    const updatedText = await page.innerText().catch(() => "");
-    
-    if (!updatedText.toLowerCase().includes("error") && 
-        !updatedText.toLowerCase().includes("required")) {
-      console.log("✅ Form disappeared and no errors detected");
-      return true;
-    }
-  }
-
-  // Strategy 4: Check for specific Greenhouse confirmation elements
-  const greenHouseConfirmed = await page.$(
-    "[data-test='submission-success'], .submission-success, .confirmation-message"
-  ).catch(() => null);
-
-  if (greenHouseConfirmed) {
-    console.log("✅ Greenhouse confirmation element found");
-    return true;
-  }
-
-  // Strategy 5: Wait and retry (give async operations time to complete)
-  await page.waitForTimeout(3000);
-  const finalText = await page.innerText().catch(() => "");
-
-  if (successPhrases.some(phrase => finalText.toLowerCase().includes(phrase))) {
-    console.log("✅ Success phrase detected after delay");
-    return true;
-  }
-
-  return false;
 }
 
-/* ============== APPLICATION SUBMISSION ============== */
+async function pickBestSelectOption(question, options, jobDescription) {
+  try {
+    const optionsList = options.map(o => `"${o.value}": "${o.text}"`).join("\n");
+
+    const response = await openai.chat.completions.create({
+      model: "gpt-4o-mini",
+      temperature: 0.1,
+      messages: [
+        {
+          role: "system",
+          content: `
+You are filling out a job application on behalf of this candidate.
+
+CANDIDATE PROFILE:
+${JSON.stringify(master)}
+
+JOB DESCRIPTION:
+${jobDescription}
+
+You will be given a dropdown question and its options.
+Respond ONLY with the exact value string of the best matching option. Nothing else.
+`
+        },
+        {
+          role: "user",
+          content: `Question: ${question}\n\nOptions:\n${optionsList}\n\nRespond with ONLY the value string of the best option.`
+        }
+      ]
+    });
+
+    const picked = response.choices[0].message.content.trim().replace(/^"|"$/g, "");
+    const valid = options.find(o => o.value === picked);
+    return valid ? picked : options[0].value;
+  } catch (err) {
+    console.error(`❌ AI select failed for "${question}":`, err.message);
+    return options[0]?.value || null;
+  }
+}
+
+/**
+ * Formats Q&A array into a readable string for Col F (Responses).
+ * Format: Q: <question> | A: <answer> || Q: <question> | A: <answer>
+ */
+function formatQAForSheet(qaLog) {
+  if (!qaLog || qaLog.length === 0) return "No custom questions detected";
+  return qaLog
+    .map(qa => `Q: ${qa.question} | A: ${qa.answer}`)
+    .join(" || ");
+}
+
+/* ─────────────────────────────────────────────
+   DOM ERROR SCRAPER
+───────────────────────────────────────────── */
+
+async function scrapeFormErrors(page) {
+  return page.evaluate(() => {
+    const selectors = [
+      '[class*="error"]:not([style*="display: none"])',
+      '[class*="invalid"]:not([style*="display: none"])',
+      '[aria-invalid="true"]',
+      '.field_with_errors',
+      '[data-error]',
+      '.alert-danger',
+      '[role="alert"]',
+    ];
+
+    const errors = [];
+    selectors.forEach(sel => {
+      document.querySelectorAll(sel).forEach(el => {
+        const text = el.innerText?.trim();
+        if (text) errors.push({ selector: sel, text });
+      });
+    });
+
+    document.querySelectorAll("input, select, textarea").forEach(field => {
+      if (!field.validity.valid) {
+        errors.push({
+          selector: `${field.tagName}[name="${field.name}"]`,
+          text: field.validationMessage || "Field invalid",
+          fieldName: field.name,
+        });
+      }
+    });
+
+    return errors;
+  });
+}
+
+/* ─────────────────────────────────────────────
+   NETWORK-LAYER SUBMISSION VALIDATOR
+───────────────────────────────────────────── */
+
+const GREENHOUSE_SUBMISSION_PATTERNS = [
+  /greenhouse\.io.*\/applications/i,
+  /greenhouse\.io.*\/submit/i,
+  /boards\.greenhouse\.io.*\/applications/i,
+  /job-boards\.greenhouse\.io.*\/applications/i,
+];
+
+function waitForCondition(conditionFn, timeout) {
+  return new Promise((resolve, reject) => {
+    const interval = 200;
+    let elapsed = 0;
+    const timer = setInterval(() => {
+      if (conditionFn()) {
+        clearInterval(timer);
+        resolve();
+      } else {
+        elapsed += interval;
+        if (elapsed >= timeout) {
+          clearInterval(timer);
+          reject(new Error("Condition timeout"));
+        }
+      }
+    }, interval);
+  });
+}
+
+async function detectConfirmationPage(page) {
+  return page.evaluate(() => {
+    const confirmationSelectors = [
+      '[class*="confirmation"]', '[class*="success"]', '[class*="thank"]',
+      '[id*="confirmation"]', '[id*="success"]',
+      '[data-test="submission-success"]', '.submission-success', '.confirmation-message',
+    ];
+    const confirmationPhrases = [
+      "application received", "thank you for applying", "successfully submitted",
+      "your application has been", "we have received your application",
+      "thanks for applying", "next steps", "what happens next", "we'll be in touch",
+    ];
+    const bodyText = document.body.innerText.toLowerCase();
+    return (
+      confirmationPhrases.some(p => bodyText.includes(p)) ||
+      confirmationSelectors.some(sel => document.querySelector(sel) !== null)
+    );
+  });
+}
+
+/**
+ * Attaches network listeners BEFORE the submit click.
+ * Returns success=true ONLY when a real HTTP response from
+ * a Greenhouse submission endpoint is confirmed.
+ * Google Sheets is never updated unless this returns success=true.
+ */
+async function validateSubmission(page, clickAction, timeout = 15000) {
+  let submissionRequest = null;
+  let submissionResponse = null;
+
+  const requestHandler = request => {
+    if (
+      (request.method() === "POST" || request.method() === "PUT") &&
+      GREENHOUSE_SUBMISSION_PATTERNS.some(re => re.test(request.url()))
+    ) {
+      submissionRequest = { url: request.url(), method: request.method(), timestamp: Date.now() };
+      console.log(`🌐 [Network] Submission request → ${request.url()}`);
+    }
+  };
+
+  const responseHandler = response => {
+    if (submissionRequest && response.url() === submissionRequest.url && !submissionResponse) {
+      submissionResponse = { url: response.url(), status: response.status(), timestamp: Date.now() };
+      console.log(`🌐 [Network] Submission response → HTTP ${response.status()}`);
+    }
+  };
+
+  page.on("request", requestHandler);
+  page.on("response", responseHandler);
+
+  const preClickErrors = await scrapeFormErrors(page);
+  if (preClickErrors.length > 0) {
+    console.warn("⚠️ Pre-click validation errors:");
+    preClickErrors.forEach(e => console.warn(`   • [${e.fieldName ?? e.selector}] ${e.text}`));
+  }
+
+  const urlBefore = page.url();
+  try {
+    await clickAction();
+  } catch (err) {
+    console.error("❌ Submit click threw:", err.message);
+  }
+
+  let timedOut = false;
+  await waitForCondition(() => submissionResponse !== null, timeout).catch(() => { timedOut = true; });
+
+  const postClickErrors = await scrapeFormErrors(page);
+  const urlAfter = page.url();
+  const urlChanged = urlAfter !== urlBefore;
+  const confirmationDetected = await detectConfirmationPage(page);
+
+  const screenshotPath = `${SCREENSHOT_DIR}/submit_${Date.now()}.png`;
+  try {
+    await page.screenshot({ path: screenshotPath, fullPage: true });
+    console.log(`📸 Screenshot → ${screenshotPath}`);
+  } catch (e) {
+    console.log("⚠️ Could not save screenshot");
+  }
+
+  page.off("request", requestHandler);
+  page.off("response", responseHandler);
+
+  let success = false;
+  let reason = "";
+
+  if (submissionResponse) {
+    const status = submissionResponse.status;
+    if (status >= 200 && status < 400) {
+      success = true;
+      reason = `Network POST confirmed — HTTP ${status}`;
+    } else {
+      reason = `Network POST received HTTP ${status} — rejected by server`;
+    }
+  } else if (confirmationDetected) {
+    success = true;
+    reason = "Confirmation page/element detected in DOM";
+  } else if (timedOut && !submissionRequest) {
+    reason = "No submission network request detected — form was NOT submitted";
+  } else if (timedOut && submissionRequest) {
+    reason = "Submission request sent but no server response within timeout";
+  } else {
+    reason = "No submission network request detected — form was NOT submitted";
+  }
+
+  const newErrors = postClickErrors.filter(e => !preClickErrors.some(p => p.text === e.text));
+  if (success && newErrors.length > 0) {
+    success = false;
+    reason += " | Overridden: new DOM validation errors after click";
+  }
+
+  console.log("\n========== SUBMISSION RESULT ==========");
+  console.log(`Status  : ${success ? "✅ SUCCESS" : "❌ FAILED / UNCONFIRMED"}`);
+  console.log(`Reason  : ${reason}`);
+  console.log(`Network : request=${!!submissionRequest} | response=${!!submissionResponse} | HTTP=${submissionResponse?.status ?? "none"}`);
+  console.log(`URL     : changed=${urlChanged}`);
+  if (newErrors.length > 0) {
+    console.log("New DOM errors after click:");
+    newErrors.forEach(e => console.log(`  • [${e.fieldName ?? e.selector}] ${e.text}`));
+  }
+  console.log("========================================\n");
+
+  return { success, reason, httpStatus: submissionResponse?.status ?? null, screenshotPath };
+}
+
+/* ─────────────────────────────────────────────
+   APPLICATION SUBMISSION
+───────────────────────────────────────────── */
 
 async function applyToGreenhouse(page, jobUrl, resumePath) {
   console.log(`🔗 Navigating to: ${jobUrl}`);
-  
-  await page.goto(jobUrl, { waitUntil: "load", timeout: 30000 });
 
-  // Give page time to fully load
+  await page.goto(jobUrl, { waitUntil: "load", timeout: 30000 });
   await page.waitForTimeout(2000);
 
-  console.log("📝 Filling form fields...");
+  // 1. Fill standard fields
+  console.log("📝 Filling standard fields...");
   await fillTextFields(page);
   await fillSelects(page);
   await checkCheckboxes(page);
   await clickRadioIfRequired(page);
 
-  // Find and upload resume
+  // 2. AI answers all custom questions
+  console.log("🤖 Scanning for custom questions...");
+  const qaLog = await answerCustomQuestions(page);
+  console.log(`🤖 Custom questions answered: ${qaLog.length}`);
+
+  // 3. Upload resume
   console.log("📄 Uploading resume...");
   const fileInput = await page.$("input[type='file']");
-  if (!fileInput) {
-    throw new Error("Resume upload field not found on page");
-  }
-
+  if (!fileInput) throw new Error("Resume upload field not found on page");
   await fileInput.setInputFiles(resumePath);
-  await page.waitForTimeout(1000); // Let file upload settle
+  await page.waitForTimeout(1000);
 
-  // Find submit button with multiple strategies
+  // 4. Find submit button
   let submit = await page.$("button[type='submit']");
   if (!submit) submit = await page.$("input[type='submit']");
   if (!submit) submit = await page.$("button:has-text('Submit')");
   if (!submit) submit = await page.$("button:has-text('Apply')");
   if (!submit) submit = await page.$("button:has-text('Send')");
+  if (!submit) throw new Error("Submit button not found on page");
 
-  if (!submit) {
-    throw new Error("Submit button not found on page");
-  }
+  // 5. Submit with network-layer validation
+  console.log("🚀 Clicking submit — monitoring network...");
+  const result = await validateSubmission(page, async () => {
+    await submit.click();
+  });
 
-  console.log("🚀 Clicking submit button...");
-  await submit.click();
-
-  // Wait for submission to complete
-  const success = await confirmSubmission(page);
-
-  if (!success) {
-    console.log("⚠️ Submission confirmation unclear. Saving debug files...");
-
-    const timestamp = Date.now();
-    try {
-      await page.screenshot({
-        path: `failure_${timestamp}.png`,
-        fullPage: true,
-      });
-      console.log(`📸 Screenshot saved: failure_${timestamp}.png`);
-    } catch (e) {
-      console.log("Could not save screenshot");
-    }
-
-    try {
-      const html = await page.content();
-      fs.writeFileSync(`failure_${timestamp}.html`, html);
-      console.log(`📄 HTML saved: failure_${timestamp}.html`);
-    } catch (e) {
-      console.log("Could not save HTML");
-    }
-
-    throw new Error("Submission confirmation not detected");
+  if (!result.success) {
+    throw new Error(`Submission not confirmed: ${result.reason}`);
   }
 
   console.log("✅ Application submitted successfully!");
+  return { result, qaLog };
 }
 
-/* ============== MAIN EXECUTION ============== */
+/* ─────────────────────────────────────────────
+   MAIN EXECUTION
+───────────────────────────────────────────── */
 
 async function run() {
   const sheets = await getSheetsClient();
@@ -361,9 +648,9 @@ async function run() {
 
     if (!applyUrl?.includes("greenhouse.io")) continue;
 
-    console.log(`\n${'='.repeat(60)}`);
+    console.log(`\n${"=".repeat(60)}`);
     console.log(`Applying → ${company} | ${role}`);
-    console.log(`${'='.repeat(60)}`);
+    console.log(`${"=".repeat(60)}`);
 
     const resumePath = await generateResumeForJob(jobId, jobDescription);
 
@@ -373,9 +660,11 @@ async function run() {
     }
 
     try {
-      await applyToGreenhouse(page, applyUrl, resumePath);
+      const { result, qaLog } = await applyToGreenhouse(page, applyUrl, resumePath);
 
-      const today = new Date().toISOString().split('T')[0];
+      // ✅ Only reaches here on confirmed network-layer submission
+      const today = new Date().toISOString().split("T")[0];
+      const responsesForSheet = formatQAForSheet(qaLog);
 
       await sheets.spreadsheets.values.append({
         spreadsheetId,
@@ -383,22 +672,26 @@ async function run() {
         valueInputOption: "USER_ENTERED",
         requestBody: {
           values: [[
-            jobId,
-            company,
-            role,
-            `resume_${jobId}.pdf`,
-            "",
-            today,
-            "SUBMITTED"
+            jobId,                  // Col A: Job_ID
+            company,                // Col B: Company
+            role,                   // Col C: Role
+            `resume_${jobId}.pdf`,  // Col D: Resume_File
+            "",                     // Col E: Cover_Letter_File (unused)
+            responsesForSheet,      // Col F: Responses ← AI Q&A log
+            today,                  // Col G: Application_Date
+            "SUBMITTED",            // Col H: Application_Status
+            result.reason           // Col I: Notes ← confirmation detail
           ]]
         }
       });
 
       console.log(`✅ Application logged to sheet`);
+      console.log(`📋 Responses: ${responsesForSheet.substring(0, 120)}...`);
       appliedCount++;
 
     } catch (err) {
       console.error(`❌ Application failed: ${err.message}`);
+      // NOT logging to sheet — submission was not confirmed
     }
   }
 
