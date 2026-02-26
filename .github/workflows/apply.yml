@@ -38,3 +38,12 @@ jobs:
       # 🔹 STEP 3: Apply to Greenhouse
       - name: Apply to Greenhouse Jobs
         run: node scripts/applyGreenhouse.js
+
+      # 📸 Upload Debug Screenshots (IMPORTANT)
+      - name: Upload Greenhouse Screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: greenhouse-debug
+          path: output/screenshots/
+          if-no-files-found: ignore
