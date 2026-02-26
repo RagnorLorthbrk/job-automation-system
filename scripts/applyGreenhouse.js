@@ -33,10 +33,42 @@ const EMAIL = master.personal.email;
 const PHONE = master.personal.phone;
 const LINKEDIN = master.personal.linkedin;
 
-// Standard fields filled manually — AI skips these
+// ─── Fields we NEVER let AI touch ────────────────────────────────────────────
+// Honeypot fields, bot traps, reCAPTCHA, hidden tokens, etc.
+const BLOCKED_FIELD_SIGNALS = [
+  "recaptcha",
+  "g-recaptcha",
+  "captcha",
+  "honeypot",
+  "bot",
+  "trap",
+  "token",
+  "csrf",
+  "trusting",
+  "adroit",
+  "hidden",
+  "sonstiges",       // German "other" — often a honeypot
+  "utm_",
+  "__jv",
+];
+
+// ─── Standard fields filled by deterministic logic (English + German) ────────
+// AI skips any field whose label/name/id contains these signals
 const STANDARD_FIELD_SIGNALS = [
-  "first", "last", "email", "phone", "linkedin",
-  "resume", "cv", "attach", "upload", "cover letter"
+  // English
+  "first name", "first_name", "firstname",
+  "last name", "last_name", "lastname",
+  "email", "e-mail",
+  "phone", "telephone", "mobile",
+  "linkedin",
+  "resume", "cv", "attach", "upload", "cover letter",
+  // German
+  "vorname",       // first name
+  "nachname",      // last name
+  "e-mail",
+  "telefon",       // phone
+  "lebenslauf",    // resume/CV
+  "anschreiben",   // cover letter
 ];
 
 // Screenshot output dir
@@ -71,17 +103,12 @@ async function waitForFile(filePath, timeout = 20000) {
 async function generateResumeForJob(jobId, jobDescription) {
   try {
     if (!fs.existsSync("output")) fs.mkdirSync("output");
-
     fs.writeFileSync("data/job_description.txt", jobDescription);
-
     execSync("node scripts/generateResume.js", { stdio: "inherit" });
-
     const exists = await waitForFile("output/resume_output.pdf");
     if (!exists) throw new Error("resume_output.pdf not created");
-
     const newFile = `output/resume_${jobId}.pdf`;
     fs.renameSync("output/resume_output.pdf", newFile);
-
     return newFile;
   } catch (err) {
     console.error("❌ Resume generation failed:", err.message);
@@ -90,7 +117,48 @@ async function generateResumeForJob(jobId, jobDescription) {
 }
 
 /* ─────────────────────────────────────────────
-   STANDARD FIELD FILLING
+   HELPERS
+───────────────────────────────────────────── */
+
+/**
+ * Returns true if the combined field signals match any blocked pattern.
+ * Used to skip honeypots, reCAPTCHA, hidden tokens.
+ */
+function isBlockedField(combined) {
+  return BLOCKED_FIELD_SIGNALS.some(sig => combined.includes(sig));
+}
+
+/**
+ * Returns true if the combined field signals match a standard personal field.
+ * Used to skip fields already handled by deterministic filling.
+ */
+function isStandardField(combined) {
+  return STANDARD_FIELD_SIGNALS.some(sig => combined.includes(sig));
+}
+
+/**
+ * Extracts the visible label text for a form element.
+ * Tries label[for], then closest container label.
+ */
+async function getLabelText(el) {
+  return el.evaluate(node => {
+    if (node.id) {
+      const label = document.querySelector(`label[for="${node.id}"]`);
+      if (label) return label.innerText.trim();
+    }
+    const parent = node.closest(
+      ".field, .form-group, .application-question, li, div, .s-grid-field"
+    );
+    if (parent) {
+      const label = parent.querySelector("label");
+      if (label) return label.innerText.trim();
+    }
+    return "";
+  });
+}
+
+/* ─────────────────────────────────────────────
+   STANDARD FIELD FILLING (English + German)
 ───────────────────────────────────────────── */
 
 async function fillTextFields(page) {
@@ -99,31 +167,55 @@ async function fillTextFields(page) {
   );
 
   for (const input of inputs) {
-    const name = ((await input.getAttribute("name")) || "").toLowerCase();
-    const placeholder = ((await input.getAttribute("placeholder")) || "").toLowerCase();
-    const label = (await input.evaluate(el => el.parentElement?.textContent || "")).toLowerCase();
+    try {
+      const name        = ((await input.getAttribute("name"))        || "").toLowerCase();
+      const placeholder = ((await input.getAttribute("placeholder")) || "").toLowerCase();
+      const id          = ((await input.getAttribute("id"))          || "").toLowerCase();
+      const labelText   = (await getLabelText(input)).toLowerCase();
+      const combined    = `${name} ${placeholder} ${id} ${labelText}`;
 
-    const currentValue = await input.inputValue().catch(() => "");
-    if (currentValue && currentValue.trim()) continue;
+      // Never touch blocked fields
+      if (isBlockedField(combined)) continue;
 
-    if (name.includes("first") || placeholder.includes("first") || label.includes("first name")) {
-      await input.fill(FIRST_NAME).catch(() => {});
-    } else if (name.includes("last") || placeholder.includes("last") || label.includes("last name")) {
-      await input.fill(LAST_NAME).catch(() => {});
-    } else if (name.includes("email") || placeholder.includes("email") || label.includes("email")) {
-      await input.fill(EMAIL).catch(() => {});
-    } else if (name.includes("phone") || placeholder.includes("phone") || label.includes("phone")) {
-      await input.fill(PHONE).catch(() => {});
-    } else if (name.includes("linkedin") || placeholder.includes("linkedin") || label.includes("linkedin")) {
-      await input.fill(LINKEDIN).catch(() => {});
-    }
+      const currentValue = await input.inputValue().catch(() => "");
+      if (currentValue && currentValue.trim()) continue;
+
+      // English + German matching
+      if (/first.?name|firstname|vorname/.test(combined)) {
+        await input.fill(FIRST_NAME).catch(() => {});
+      } else if (/last.?name|lastname|nachname/.test(combined)) {
+        await input.fill(LAST_NAME).catch(() => {});
+      } else if (/e-?mail/.test(combined)) {
+        await input.fill(EMAIL).catch(() => {});
+      } else if (/phone|telefon|mobile|handynummer/.test(combined)) {
+        await input.fill(PHONE).catch(() => {});
+      } else if (/linkedin/.test(combined)) {
+        await input.fill(LINKEDIN).catch(() => {});
+      }
+    } catch (e) {}
   }
 }
 
-async function fillSelects(page) {
+/**
+ * Fills standard <select> dropdowns that are personal fields
+ * (e.g. country selects on standard forms).
+ * Custom question selects are handled by AI in answerCustomQuestions().
+ */
+async function fillStandardSelects(page) {
   const selects = await page.$$("select");
   for (const select of selects) {
     try {
+      const name      = ((await select.getAttribute("name")) || "").toLowerCase();
+      const id        = ((await select.getAttribute("id"))   || "").toLowerCase();
+      const labelText = (await getLabelText(select)).toLowerCase();
+      const combined  = `${name} ${id} ${labelText}`;
+
+      if (isBlockedField(combined)) continue;
+
+      // Only auto-fill if it looks like a standard personal field
+      // Custom question selects (ASA, region, GDPR etc.) are left for AI
+      if (!isStandardField(combined)) continue;
+
       const options = await select.$$("option");
       if (options.length > 1) {
         const value = await options[1].getAttribute("value");
@@ -137,6 +229,10 @@ async function checkCheckboxes(page) {
   const checkboxes = await page.$$("input[type='checkbox']");
   for (const box of checkboxes) {
     try {
+      const name      = ((await box.getAttribute("name")) || "").toLowerCase();
+      const id        = ((await box.getAttribute("id"))   || "").toLowerCase();
+      const combined  = `${name} ${id}`;
+      if (isBlockedField(combined)) continue;
       const isChecked = await box.isChecked().catch(() => false);
       if (!isChecked) await box.check().catch(() => {});
     } catch (e) {}
@@ -164,11 +260,6 @@ async function clickRadioIfRequired(page) {
    AI QUESTION ANSWERING
 ───────────────────────────────────────────── */
 
-/**
- * Scans the form for custom open-ended questions,
- * sends each to OpenAI with resume + JD context,
- * fills the answer, and returns a Q&A log for the sheet.
- */
 async function answerCustomQuestions(page) {
   const jobDescription = fs.existsSync("data/job_description.txt")
     ? fs.readFileSync("data/job_description.txt", "utf-8")
@@ -176,43 +267,36 @@ async function answerCustomQuestions(page) {
 
   const qaLog = [];
 
-  // Handle text inputs and textareas
-  const inputs = await page.$$("input[type='text'], input[type='url'], textarea");
+  // ── Text inputs & textareas ──────────────────────────────────────────────
+  const inputs = await page.$$(
+    "input[type='text'], input[type='url'], textarea"
+  );
 
   for (const input of inputs) {
     try {
-      const name = ((await input.getAttribute("name")) || "").toLowerCase();
+      const name        = ((await input.getAttribute("name"))        || "").toLowerCase();
       const placeholder = ((await input.getAttribute("placeholder")) || "").toLowerCase();
-      const id = ((await input.getAttribute("id")) || "").toLowerCase();
+      const id          = ((await input.getAttribute("id"))          || "").toLowerCase();
+      const labelText   = await getLabelText(input);
+      const combined    = `${name} ${placeholder} ${id} ${labelText.toLowerCase()}`;
 
-      // Extract label from DOM
-      const labelText = await input.evaluate(el => {
-        if (el.id) {
-          const label = document.querySelector(`label[for="${el.id}"]`);
-          if (label) return label.innerText.trim();
-        }
-        const parent = el.closest(".field, .form-group, .application-question, li, div");
-        if (parent) {
-          const label = parent.querySelector("label");
-          if (label) return label.innerText.trim();
-        }
-        return "";
-      });
+      // Hard skip: blocked/honeypot fields
+      if (isBlockedField(combined)) {
+        console.log(`🚫 Skipping blocked field: "${labelText || name}"`);
+        continue;
+      }
 
-      const combined = (name + " " + placeholder + " " + id + " " + labelText).toLowerCase();
-
-      // Skip standard fields
-      if (STANDARD_FIELD_SIGNALS.some(sig => combined.includes(sig))) continue;
+      // Skip standard personal fields — already handled
+      if (isStandardField(combined)) continue;
 
       // Skip if already filled
       const currentValue = await input.inputValue().catch(() => "");
       if (currentValue && currentValue.trim()) continue;
 
       const questionText = labelText || placeholder || name;
-      if (!questionText || questionText.length < 3) continue;
+      if (!questionText || questionText.trim().length < 3) continue;
 
       console.log(`🤖 AI answering: "${questionText}"`);
-
       const answer = await generateAIAnswer(questionText, jobDescription);
 
       if (answer) {
@@ -223,43 +307,46 @@ async function answerCustomQuestions(page) {
     } catch (e) {}
   }
 
-  // Handle select dropdowns with meaningful labels
+  // ── Select dropdowns ─────────────────────────────────────────────────────
   const selects = await page.$$("select");
+
   for (const select of selects) {
     try {
-      const id = ((await select.getAttribute("id")) || "").toLowerCase();
-      const name = ((await select.getAttribute("name")) || "").toLowerCase();
+      const name      = ((await select.getAttribute("name")) || "").toLowerCase();
+      const id        = ((await select.getAttribute("id"))   || "").toLowerCase();
+      const labelText = await getLabelText(select);
+      const combined  = `${name} ${id} ${labelText.toLowerCase()}`;
 
-      const labelText = await select.evaluate(el => {
-        if (el.id) {
-          const label = document.querySelector(`label[for="${el.id}"]`);
-          if (label) return label.innerText.trim();
-        }
-        const parent = el.closest(".field, .form-group, .application-question, li, div");
-        if (parent) {
-          const label = parent.querySelector("label");
-          if (label) return label.innerText.trim();
-        }
-        return "";
-      });
+      // Hard skip: blocked/honeypot fields
+      if (isBlockedField(combined)) {
+        console.log(`🚫 Skipping blocked select: "${labelText || name}"`);
+        continue;
+      }
 
-      const combined = (name + " " + id + " " + labelText).toLowerCase();
-      if (STANDARD_FIELD_SIGNALS.some(sig => combined.includes(sig))) continue;
+      // Skip standard personal fields — already handled by fillStandardSelects
+      if (isStandardField(combined)) continue;
 
+      // Get meaningful options (skip empty / placeholder options)
       const options = await select.evaluate(el => {
-        return Array.from(el.options).map(o => ({
-          value: o.value,
-          text: o.text.trim()
-        })).filter(o => o.value && o.text && o.text.toLowerCase() !== "select...");
+        return Array.from(el.options)
+          .map(o => ({ value: o.value, text: o.text.trim() }))
+          .filter(o =>
+            o.value &&
+            o.text &&
+            !/^select|^choose|^auswählen|^wählen|^--/i.test(o.text)
+          );
       });
 
       if (options.length === 0) continue;
 
+      // Check if already has a non-placeholder value selected
+      const currentVal = await select.evaluate(el => el.value);
+      if (currentVal && currentVal.trim()) continue;
+
       const questionText = labelText || name;
-      if (!questionText || questionText.length < 3) continue;
+      if (!questionText || questionText.trim().length < 3) continue;
 
       console.log(`🤖 AI selecting for: "${questionText}"`);
-
       const bestOption = await pickBestSelectOption(questionText, options, jobDescription);
 
       if (bestOption) {
@@ -294,13 +381,18 @@ ${jobDescription}
 RULES:
 - Answer ONLY the question asked. No preamble, no labels, no "Answer:".
 - Keep answers concise (1-4 sentences max unless clearly a long-form essay question).
-- For yes/no questions, answer "Yes" or "No" only.
-- For salary/compensation questions, answer: "Open to discussion based on the role and total package."
-- For notice period questions, answer: "30 days."
-- For work authorization / visa questions, answer: "I am based in India and open to fully remote roles globally."
-- For "why do you want to work here" type questions, write 2-3 relevant sentences using the job description.
-- Never fabricate metrics not found in the candidate profile.
+- For yes/no questions → answer "Yes" or "No" only.
+- For salary/compensation questions → answer: "Open to discussion based on the role and total package."
+- For notice period questions → answer: "30 days."
+- For work authorization / visa questions → answer: "I am based in India and open to fully remote roles globally."
+- For location/city questions → answer: "New Delhi, India."
+- For country questions → answer: "India."
+- For "why do you want to work here" type questions → write 2-3 relevant sentences using the job description.
+- For hobby/fun fact questions → write 1-2 genuine sentences based on the candidate profile.
+- For "how did you find us" questions → answer: "Through an online job board."
+- Never fabricate specific metrics not found in the candidate profile.
 - Sound professional and confident at all times.
+- If the question is in German, answer in German.
 `
         },
         {
@@ -336,19 +428,21 @@ ${JSON.stringify(master)}
 JOB DESCRIPTION:
 ${jobDescription}
 
-You will be given a dropdown question and its options.
+You will be given a dropdown question and its available options.
 Respond ONLY with the exact value string of the best matching option. Nothing else.
+No explanation. No quotes around your answer unless the value itself contains quotes.
 `
         },
         {
           role: "user",
-          content: `Question: ${question}\n\nOptions:\n${optionsList}\n\nRespond with ONLY the value string of the best option.`
+          content: `Question: ${question}\n\nAvailable options:\n${optionsList}\n\nRespond with ONLY the value of the best option.`
         }
       ]
     });
 
     const picked = response.choices[0].message.content.trim().replace(/^"|"$/g, "");
     const valid = options.find(o => o.value === picked);
+    // If AI returned something invalid, fall back to first real option
     return valid ? picked : options[0].value;
   } catch (err) {
     console.error(`❌ AI select failed for "${question}":`, err.message);
@@ -446,6 +540,8 @@ async function detectConfirmationPage(page) {
       "application received", "thank you for applying", "successfully submitted",
       "your application has been", "we have received your application",
       "thanks for applying", "next steps", "what happens next", "we'll be in touch",
+      // German
+      "bewerbung erhalten", "vielen dank für ihre bewerbung", "erfolgreich eingereicht",
     ];
     const bodyText = document.body.innerText.toLowerCase();
     return (
@@ -459,7 +555,7 @@ async function detectConfirmationPage(page) {
  * Attaches network listeners BEFORE the submit click.
  * Returns success=true ONLY when a real HTTP response from
  * a Greenhouse submission endpoint is confirmed.
- * Google Sheets is never updated unless this returns success=true.
+ * Google Sheets is NEVER updated unless this returns success=true.
  */
 async function validateSubmission(page, clickAction, timeout = 15000) {
   let submissionRequest = null;
@@ -487,8 +583,10 @@ async function validateSubmission(page, clickAction, timeout = 15000) {
 
   const preClickErrors = await scrapeFormErrors(page);
   if (preClickErrors.length > 0) {
-    console.warn("⚠️ Pre-click validation errors:");
-    preClickErrors.forEach(e => console.warn(`   • [${e.fieldName ?? e.selector}] ${e.text}`));
+    console.warn(`⚠️ Pre-click validation errors (${preClickErrors.length} fields not filled):`);
+    // Deduplicate for cleaner logs
+    const unique = [...new Set(preClickErrors.map(e => e.text))];
+    unique.forEach(t => console.warn(`   • ${t}`));
   }
 
   const urlBefore = page.url();
@@ -551,8 +649,9 @@ async function validateSubmission(page, clickAction, timeout = 15000) {
   console.log(`Network : request=${!!submissionRequest} | response=${!!submissionResponse} | HTTP=${submissionResponse?.status ?? "none"}`);
   console.log(`URL     : changed=${urlChanged}`);
   if (newErrors.length > 0) {
-    console.log("New DOM errors after click:");
-    newErrors.forEach(e => console.log(`  • [${e.fieldName ?? e.selector}] ${e.text}`));
+    console.log("Unfilled required fields after click:");
+    const uniqueNew = [...new Set(newErrors.map(e => e.text))];
+    uniqueNew.forEach(t => console.log(`  • ${t}`));
   }
   console.log("========================================\n");
 
@@ -569,14 +668,14 @@ async function applyToGreenhouse(page, jobUrl, resumePath) {
   await page.goto(jobUrl, { waitUntil: "load", timeout: 30000 });
   await page.waitForTimeout(2000);
 
-  // 1. Fill standard fields
+  // 1. Fill standard personal fields (English + German)
   console.log("📝 Filling standard fields...");
   await fillTextFields(page);
-  await fillSelects(page);
+  await fillStandardSelects(page);
   await checkCheckboxes(page);
   await clickRadioIfRequired(page);
 
-  // 2. AI answers all custom questions
+  // 2. AI answers all custom questions (text + dropdowns)
   console.log("🤖 Scanning for custom questions...");
   const qaLog = await answerCustomQuestions(page);
   console.log(`🤖 Custom questions answered: ${qaLog.length}`);
@@ -594,6 +693,8 @@ async function applyToGreenhouse(page, jobUrl, resumePath) {
   if (!submit) submit = await page.$("button:has-text('Submit')");
   if (!submit) submit = await page.$("button:has-text('Apply')");
   if (!submit) submit = await page.$("button:has-text('Send')");
+  if (!submit) submit = await page.$("button:has-text('Absenden')");   // German
+  if (!submit) submit = await page.$("button:has-text('Bewerben')");   // German "Apply"
   if (!submit) throw new Error("Submit button not found on page");
 
   // 5. Submit with network-layer validation
@@ -680,7 +781,7 @@ async function run() {
             responsesForSheet,      // Col F: Responses ← AI Q&A log
             today,                  // Col G: Application_Date
             "SUBMITTED",            // Col H: Application_Status
-            result.reason           // Col I: Notes ← confirmation detail
+            result.reason           // Col I: Notes ← network confirmation detail
           ]]
         }
       });
