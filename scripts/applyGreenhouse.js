@@ -125,65 +125,76 @@ async function getLabelText(elHandle) {
 ───────────────────────────────────────────── */
 
 /**
- * Fills a single React Select combobox.
- * @param {Page} page - Playwright page
- * @param {ElementHandle} inputEl - The <input role="combobox"> element
- * @param {string} searchTerm - Text to type to filter options
- * @param {string} questionText - Full question for logging
- * @returns {string|null} - The text of the option that was selected
+ * Fills a React Select combobox using a fully dynamic approach:
+ * 1. Click to open the dropdown
+ * 2. Read ALL visible options from the DOM
+ * 3. Send options to AI — AI picks the best one
+ * 4. Type that exact option text to filter
+ * 5. Click the matching option
  */
-async function fillReactSelect(page, inputEl, searchTerm, questionText) {
+async function fillReactSelect(page, inputEl, questionText, jobDescription) {
   try {
-    // Click the input to open the dropdown
+    // Step 1: Click to open the dropdown
     await inputEl.click();
-    await page.waitForTimeout(400);
+    await page.waitForTimeout(500);
 
-    // Clear any existing value and type search term
-    await inputEl.fill("");
-    await inputEl.type(searchTerm, { delay: 50 });
-    await page.waitForTimeout(600);
+    // Step 2: Read all visible options
+    let optionTexts = await page.evaluate(() => {
+      const opts = document.querySelectorAll('[role="option"], .select__option');
+      return Array.from(opts).map(o => o.innerText.trim()).filter(t => t.length > 0);
+    });
 
-    // Wait for the option list to appear
-    const listbox = await page.waitForSelector(
-      '[role="listbox"], .select__menu, .select__option',
-      { timeout: 3000 }
-    ).catch(() => null);
-
-    if (!listbox) {
-      console.log(`   ⚠️ No dropdown appeared for "${questionText}" after typing "${searchTerm}"`);
-      // Try clearing and clicking again
-      await inputEl.fill("");
+    // If nothing appeared, try clicking again
+    if (optionTexts.length === 0) {
       await inputEl.click();
-      await page.waitForTimeout(500);
-      await inputEl.type(searchTerm, { delay: 50 });
       await page.waitForTimeout(600);
+      optionTexts = await page.evaluate(() => {
+        const opts = document.querySelectorAll('[role="option"], .select__option');
+        return Array.from(opts).map(o => o.innerText.trim()).filter(t => t.length > 0);
+      });
     }
 
-    // Find all visible options
-    const options = await page.$$('[role="option"], .select__option');
-    if (options.length === 0) {
-      console.log(`   ⚠️ No options found for "${questionText}"`);
-      // Press Escape to close and move on
-      await inputEl.press("Escape");
+    if (optionTexts.length === 0) {
+      console.log(`   ⚠️ No options visible for "${questionText}" — skipping`);
+      await page.keyboard.press("Escape");
       return null;
     }
 
-    // Click the first matching option (case-insensitive partial match)
+    console.log(`   📋 Options: ${optionTexts.join(" | ")}`);
+
+    // Step 3: AI picks the best option from the ACTUAL list
+    const bestOptionText = await pickBestReactSelectOption(questionText, optionTexts, jobDescription);
+    console.log(`   🎯 AI picked: "${bestOptionText}"`);
+
+    // Step 4: Clear and type the chosen option text to filter
+    await inputEl.fill("");
+    await inputEl.type(bestOptionText, { delay: 40 });
+    await page.waitForTimeout(500);
+
+    // Step 5: Click the matching option
+    const options = await page.$$('[role="option"], .select__option');
     let clicked = null;
+
     for (const opt of options) {
       const text = await opt.innerText().catch(() => "");
-      if (text.toLowerCase().includes(searchTerm.toLowerCase())) {
-        await opt.click();
-        clicked = text.trim();
-        break;
+      if (text.trim().toLowerCase() === bestOptionText.toLowerCase()) {
+        await opt.click(); clicked = text.trim(); break;
       }
     }
-
-    // If no partial match, click the first option
+    if (!clicked) {
+      for (const opt of options) {
+        const text = await opt.innerText().catch(() => "");
+        if (text.trim().toLowerCase().includes(bestOptionText.toLowerCase()) ||
+            bestOptionText.toLowerCase().includes(text.trim().toLowerCase())) {
+          await opt.click(); clicked = text.trim(); break;
+        }
+      }
+    }
     if (!clicked && options.length > 0) {
       const text = await options[0].innerText().catch(() => "");
       await options[0].click();
       clicked = text.trim();
+      console.log(`   ⚠️ Exact match not found, used first option: "${clicked}"`);
     }
 
     await page.waitForTimeout(300);
@@ -196,10 +207,10 @@ async function fillReactSelect(page, inputEl, searchTerm, questionText) {
 }
 
 /**
- * Determines the best search term for a React Select dropdown
- * based on the question and candidate profile.
+ * AI picks the best option from the ACTUAL visible option texts.
+ * Fully dynamic — works for any language, any wording.
  */
-async function getBestReactSelectTerm(questionText, jobDescription) {
+async function pickBestReactSelectOption(questionText, optionTexts, jobDescription) {
   try {
     const response = await openai.chat.completions.create({
       model: "gpt-4o-mini",
@@ -207,145 +218,43 @@ async function getBestReactSelectTerm(questionText, jobDescription) {
       messages: [
         {
           role: "system",
-          content: `
-You are filling out a job application for this candidate:
-${JSON.stringify(master)}
+          content: `You are filling out a job application for this candidate.
+CANDIDATE: ${JSON.stringify(master)}
+JOB: ${jobDescription}
 
-JOB DESCRIPTION: ${jobDescription}
-
-You will receive a dropdown question. Return ONLY a short search term (1-3 words) 
-to type into the dropdown to find the right option.
+You will receive a dropdown question and the EXACT list of available options from the form.
+Pick the option that best represents the candidate.
 
 RULES:
-- For yes/no questions where candidate has the skill → return: Yes
-- For yes/no questions where candidate does NOT have the skill → return: No
-- Candidate HAS: Google Ads, Apple Search Ads (ASA), Meta Ads, LinkedIn Ads, TikTok,
+- For yes/no: pick Yes-equivalent if skill in profile, No-equivalent otherwise.
+  Candidate HAS: Google Ads, Apple Search Ads (ASA), Meta Ads, LinkedIn Ads, TikTok,
   Snapchat, Pinterest, Reddit, Programmatic (DV360), CRM, HubSpot, Marketo, Salesforce,
   ABM, demand gen, performance marketing, paid search, paid social, affiliate, email marketing.
-- For region/location → return: Asia (or the most relevant region option for India)
-- For GDPR/consent/agreement → return: Yes
-- For notice period / start date → return: Immediately (or the shortest option text)
-- For work type → return: Full time
-- Respond with ONLY the search term. Nothing else.
-`
+- For region/location: pick the option closest to India, South Asia, or Asia Pacific.
+- For GDPR/consent: pick the affirmative/yes option.
+- For notice period / start date: pick shortest notice or "immediately".
+- For work type: pick full-time equivalent.
+- Respond with ONLY the EXACT text of the best option, copied verbatim from the list.`
         },
-        { role: "user", content: `Question: ${questionText}` }
+        {
+          role: "user",
+          content: `Question: ${questionText}\n\nOptions:\n${optionTexts.map((t, i) => `${i + 1}. ${t}`).join("\n")}\n\nRespond with ONLY the exact option text.`
+        }
       ]
     });
-    return response.choices[0].message.content.trim();
+    const picked = response.choices[0].message.content.trim();
+    const exact = optionTexts.find(t => t.toLowerCase() === picked.toLowerCase());
+    const partial = optionTexts.find(t =>
+      t.toLowerCase().includes(picked.toLowerCase()) ||
+      picked.toLowerCase().includes(t.toLowerCase())
+    );
+    return exact || partial || optionTexts[0];
   } catch (err) {
-    return "Yes"; // safe fallback
+    console.error("❌ AI option pick failed:", err.message);
+    return optionTexts[0];
   }
 }
 
-/* ─────────────────────────────────────────────
-   STANDARD FIELD FILLING
-───────────────────────────────────────────── */
-async function fillTextFields(page) {
-  const inputs = await page.$$(
-    "input[type='text'], input[type='email'], input[type='tel'], textarea"
-  );
-  for (const input of inputs) {
-    try {
-      // Skip React Select comboboxes — handled separately
-      const role = await input.getAttribute("role");
-      if (role === "combobox") continue;
-
-      const name        = ((await input.getAttribute("name"))        || "").toLowerCase();
-      const placeholder = ((await input.getAttribute("placeholder")) || "").toLowerCase();
-      const id          = ((await input.getAttribute("id"))          || "").toLowerCase();
-      const labelText   = (await getLabelText(input)).toLowerCase();
-      const combined    = `${name} ${placeholder} ${id} ${labelText}`;
-
-      if (isBlocked(combined)) continue;
-
-      const val = await input.inputValue().catch(() => "");
-      if (val && val.trim()) continue;
-
-      if      (/first.?name|firstname|vorname/.test(combined))    await input.fill(FIRST_NAME).catch(() => {});
-      else if (/last.?name|lastname|nachname/.test(combined))     await input.fill(LAST_NAME).catch(() => {});
-      else if (/e-?mail/.test(combined))                          await input.fill(EMAIL).catch(() => {});
-      else if (/phone|telefon|mobile|handynummer/.test(combined)) await input.fill(PHONE).catch(() => {});
-      else if (/linkedin/.test(combined))                         await input.fill(LINKEDIN).catch(() => {});
-    } catch (e) {}
-  }
-}
-
-async function checkCheckboxes(page) {
-  const checkboxes = await page.$$("input[type='checkbox']");
-  for (const box of checkboxes) {
-    try {
-      const name = ((await box.getAttribute("name")) || "").toLowerCase();
-      const id   = ((await box.getAttribute("id"))   || "").toLowerCase();
-      if (isBlocked(`${name} ${id}`)) continue;
-      const checked = await box.isChecked().catch(() => false);
-      if (!checked) await box.check().catch(() => {});
-    } catch (e) {}
-  }
-}
-
-async function clickRadioIfRequired(page) {
-  const radios = await page.$$("input[type='radio']");
-  const grouped = {};
-  for (const radio of radios) {
-    const name = await radio.getAttribute("name");
-    if (!grouped[name]) grouped[name] = [];
-    grouped[name].push(radio);
-  }
-  for (const group in grouped) {
-    try {
-      const first = grouped[group][0];
-      const checked = await first.isChecked().catch(() => false);
-      if (!checked) await first.check().catch(() => {});
-    } catch (e) {}
-  }
-}
-
-/* ─────────────────────────────────────────────
-   NATIVE <SELECT> FILLING
-───────────────────────────────────────────── */
-async function fillNativeSelects(page, jobDescription) {
-  const selects = await page.$$("select");
-  const qaLog = [];
-
-  for (const select of selects) {
-    try {
-      const name      = ((await select.getAttribute("name")) || "").toLowerCase();
-      const id        = ((await select.getAttribute("id"))   || "").toLowerCase();
-      const labelText = await getLabelText(select);
-      const combined  = `${name} ${id} ${labelText.toLowerCase()}`;
-
-      if (isBlocked(combined)) continue;
-
-      const options = await select.evaluate(el =>
-        Array.from(el.options).map(o => ({ value: o.value, text: o.text.trim() }))
-          .filter(o => o.value && o.text && !/^select|^choose|^auswählen|^wählen\s|^--/i.test(o.text))
-      );
-      if (options.length === 0) continue;
-
-      const currentVal = await select.evaluate(el => el.value);
-      if (currentVal && currentVal.trim() && currentVal !== "0") continue;
-
-      const questionText = labelText || name;
-      if (!questionText || questionText.trim().length < 3) continue;
-
-      console.log(`🤖 AI selecting (native select): "${questionText}"`);
-      const bestOption = await pickBestNativeSelectOption(questionText, options, jobDescription);
-
-      if (bestOption) {
-        await select.selectOption(bestOption).catch(() => {});
-        await select.evaluate(el => {
-          el.dispatchEvent(new Event("change", { bubbles: true }));
-          el.dispatchEvent(new Event("input",  { bubbles: true }));
-        });
-        const selectedText = options.find(o => o.value === bestOption)?.text || bestOption;
-        qaLog.push({ question: questionText, answer: selectedText });
-        console.log(`   ✅ Selected: "${selectedText}"`);
-      }
-    } catch (e) {}
-  }
-  return qaLog;
-}
 
 async function pickBestNativeSelectOption(question, options, jobDescription) {
   try {
@@ -408,10 +317,7 @@ async function answerCustomQuestions(page) {
       if (hasValue) { console.log(`   ⏭️ Already has value, skipping: "${questionText}"`); continue; }
 
       console.log(`🤖 AI selecting (React Select): "${questionText}"`);
-      const searchTerm = await getBestReactSelectTerm(questionText, jobDescription);
-      console.log(`   🔎 Searching for: "${searchTerm}"`);
-
-      const selectedText = await fillReactSelect(page, input, searchTerm, questionText);
+      const selectedText = await fillReactSelect(page, input, questionText, jobDescription);
 
       if (selectedText) {
         qaLog.push({ question: questionText, answer: selectedText });
