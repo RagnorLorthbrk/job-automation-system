@@ -631,7 +631,15 @@ async function applyToGreenhouse(page, jobUrl, resumePath) {
   await page.goto(jobUrl, { waitUntil: "load", timeout: 30000 });
   await page.waitForTimeout(2000);
 
-  // ── TEMPORARY DEBUG: log all selects and their options ──────────────────
+  // ── TEMPORARY DEBUG: save full HTML + log all selects ───────────────────
+  try {
+    const html = await page.content();
+    const debugFile = `output/debug_${Date.now()}.html`;
+    fs.writeFileSync(debugFile, html);
+    console.log(`🛠️ Debug HTML saved → ${debugFile}`);
+  } catch (e) {
+    console.log("⚠️ Could not save debug HTML");
+  }
   await debugLogAllSelects(page);
   // ────────────────────────────────────────────────────────────────────────
 
