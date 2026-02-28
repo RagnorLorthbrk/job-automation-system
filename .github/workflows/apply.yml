@@ -48,7 +48,7 @@ jobs:
           path: output/screenshots/
           if-no-files-found: ignore
 
-     # 📸 Upload Debug HTML (IMPORTANT)
+      # 📸 Upload Debug HTML (IMPORTANT)
       - name: Upload form debug HTML
         uses: actions/upload-artifact@v4
         with:
