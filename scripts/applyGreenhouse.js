@@ -19,19 +19,21 @@ if (!process.env.GOOGLE_SERVICE_ACCOUNT) {
 
 const SERVICE_ACCOUNT = JSON.parse(process.env.GOOGLE_SERVICE_ACCOUNT);
 
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
-});
+const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
-const master = JSON.parse(
-  fs.readFileSync("data/master_resume.json", "utf-8")
-);
+const master = JSON.parse(fs.readFileSync("data/master_resume.json", "utf-8"));
 
-const FIRST_NAME = master.personal.name.split(" ")[0];
-const LAST_NAME  = master.personal.name.split(" ").slice(1).join(" ");
-const EMAIL      = master.personal.email;
-const PHONE      = master.personal.phone;
-const LINKEDIN   = master.personal.linkedin;
+const FIRST_NAME   = master.personal.name.split(" ")[0];
+const LAST_NAME    = master.personal.name.split(" ").slice(1).join(" ");
+const EMAIL        = master.personal.email;
+const PHONE        = master.personal.phone;
+const LINKEDIN     = master.personal.linkedin;
+
+// Clean consistent resume filename shown to every recruiter
+const RESUME_DISPLAY_NAME = "Manoj_Kumar_CV.pdf";
+
+const SCREENSHOT_DIR = "output/screenshots";
+if (!fs.existsSync(SCREENSHOT_DIR)) fs.mkdirSync(SCREENSHOT_DIR, { recursive: true });
 
 // ─── Fields AI must NEVER touch ──────────────────────────────────────────────
 const BLOCKED_FIELD_SIGNALS = [
@@ -39,12 +41,11 @@ const BLOCKED_FIELD_SIGNALS = [
   "honeypot", "bot", "trap",
   "token", "csrf",
   "trusting", "adroit",
-  "sonstiges",   // German honeypot "other"
+  "sonstiges",
   "utm_", "__jv",
 ];
 
-// ─── Standard personal fields — filled deterministically, AI skips these ─────
-// These signals appear in name/id/label of personal fields (English + German)
+// ─── Standard personal fields — filled deterministically ─────────────────────
 const STANDARD_FIELD_SIGNALS = [
   "first name", "first_name", "firstname",
   "last name",  "last_name",  "lastname",
@@ -52,12 +53,11 @@ const STANDARD_FIELD_SIGNALS = [
   "phone", "telephone", "mobile",
   "linkedin",
   "resume", "cv", "attach", "upload", "cover letter",
-  // German
   "vorname", "nachname", "telefon", "lebenslauf", "anschreiben",
 ];
 
-const SCREENSHOT_DIR = "output/screenshots";
-if (!fs.existsSync(SCREENSHOT_DIR)) fs.mkdirSync(SCREENSHOT_DIR, { recursive: true });
+function isBlocked(s)  { return BLOCKED_FIELD_SIGNALS.some(sig => s.includes(sig)); }
+function isStandard(s) { return STANDARD_FIELD_SIGNALS.some(sig => s.includes(sig)); }
 
 /* ─────────────────────────────────────────────
    SHEETS CLIENT
@@ -91,7 +91,9 @@ async function generateResumeForJob(jobId, jobDescription) {
     execSync("node scripts/generateResume.js", { stdio: "inherit" });
     const exists = await waitForFile("output/resume_output.pdf");
     if (!exists) throw new Error("resume_output.pdf not created");
-    const newFile = `output/resume_${jobId}.pdf`;
+    // Always save as Manoj_Kumar_CV.pdf — clean name for recruiters
+    const newFile = `output/${RESUME_DISPLAY_NAME}`;
+    if (fs.existsSync(newFile)) fs.unlinkSync(newFile);
     fs.renameSync("output/resume_output.pdf", newFile);
     return newFile;
   } catch (err) {
@@ -101,51 +103,44 @@ async function generateResumeForJob(jobId, jobDescription) {
 }
 
 /* ─────────────────────────────────────────────
-   HELPERS
+   LABEL EXTRACTION
 ───────────────────────────────────────────── */
 
-function isBlocked(combined)  { return BLOCKED_FIELD_SIGNALS.some(s => combined.includes(s)); }
-function isStandard(combined) { return STANDARD_FIELD_SIGNALS.some(s => combined.includes(s)); }
-
 /**
- * Reads the visible label for any form element.
- * Checks label[for=id] first, then nearest container label.
+ * Gets the visible label text for any form element.
+ * Walks up through multiple parent levels to find it.
  */
 async function getLabelText(elHandle) {
   return elHandle.evaluate(node => {
+    // 1. Try explicit label[for="id"]
     if (node.id) {
       const lbl = document.querySelector(`label[for="${node.id}"]`);
       if (lbl) return lbl.innerText.trim();
     }
-    const parent = node.closest(
-      ".field, .form-group, .application-question, li, .s-grid-field, div"
-    );
-    if (parent) {
+    // 2. Walk up through parents looking for a label
+    let parent = node.parentElement;
+    let depth = 0;
+    while (parent && depth < 6) {
       const lbl = parent.querySelector("label");
-      if (lbl) return lbl.innerText.trim();
+      if (lbl && !lbl.contains(node)) return lbl.innerText.trim();
+      // Also check for legend (used in fieldsets)
+      const legend = parent.querySelector("legend");
+      if (legend) return legend.innerText.trim();
+      parent = parent.parentElement;
+      depth++;
     }
     return "";
   });
 }
 
-/**
- * KEY FIX: Returns true if a given element handle is actually a <select>.
- * Used inside the text-input loop to skip elements whose label happens
- * to live inside a select's container — preventing text fill on dropdowns.
- */
-async function isSelectElement(elHandle) {
-  return elHandle.evaluate(node => node.tagName.toLowerCase() === "select");
-}
-
 /* ─────────────────────────────────────────────
-   STANDARD FIELD FILLING  (English + German)
+   STANDARD FIELD FILLING (English + German)
 ───────────────────────────────────────────── */
 
 async function fillTextFields(page) {
   const inputs = await page.$$(
     "input[type='text'], input[type='email'], input[type='tel'], textarea"
   );
-
   for (const input of inputs) {
     try {
       const name        = ((await input.getAttribute("name"))        || "").toLowerCase();
@@ -156,14 +151,14 @@ async function fillTextFields(page) {
 
       if (isBlocked(combined)) continue;
 
-      const currentValue = await input.inputValue().catch(() => "");
-      if (currentValue && currentValue.trim()) continue;
+      const val = await input.inputValue().catch(() => "");
+      if (val && val.trim()) continue;
 
-      if      (/first.?name|firstname|vorname/.test(combined))              await input.fill(FIRST_NAME).catch(() => {});
-      else if (/last.?name|lastname|nachname/.test(combined))               await input.fill(LAST_NAME).catch(() => {});
-      else if (/e-?mail/.test(combined))                                    await input.fill(EMAIL).catch(() => {});
-      else if (/phone|telefon|mobile|handynummer/.test(combined))           await input.fill(PHONE).catch(() => {});
-      else if (/linkedin/.test(combined))                                   await input.fill(LINKEDIN).catch(() => {});
+      if      (/first.?name|firstname|vorname/.test(combined))     await input.fill(FIRST_NAME).catch(() => {});
+      else if (/last.?name|lastname|nachname/.test(combined))      await input.fill(LAST_NAME).catch(() => {});
+      else if (/e-?mail/.test(combined))                           await input.fill(EMAIL).catch(() => {});
+      else if (/phone|telefon|mobile|handynummer/.test(combined))  await input.fill(PHONE).catch(() => {});
+      else if (/linkedin/.test(combined))                          await input.fill(LINKEDIN).catch(() => {});
     } catch (e) {}
   }
 }
@@ -174,10 +169,9 @@ async function checkCheckboxes(page) {
     try {
       const name     = ((await box.getAttribute("name")) || "").toLowerCase();
       const id       = ((await box.getAttribute("id"))   || "").toLowerCase();
-      const combined = `${name} ${id}`;
-      if (isBlocked(combined)) continue;
-      const isChecked = await box.isChecked().catch(() => false);
-      if (!isChecked) await box.check().catch(() => {});
+      if (isBlocked(`${name} ${id}`)) continue;
+      const checked = await box.isChecked().catch(() => false);
+      if (!checked) await box.check().catch(() => {});
     } catch (e) {}
   }
 }
@@ -193,16 +187,81 @@ async function clickRadioIfRequired(page) {
   for (const group in grouped) {
     try {
       const first = grouped[group][0];
-      const isChecked = await first.isChecked().catch(() => false);
-      if (!isChecked) await first.check().catch(() => {});
+      const checked = await first.isChecked().catch(() => false);
+      if (!checked) await first.check().catch(() => {});
     } catch (e) {}
   }
 }
 
 /* ─────────────────────────────────────────────
+   DETECT ALL FORM FIELDS WITH THEIR TYPE
+   Build a map of every question on the page
+   so we can route each one correctly.
+───────────────────────────────────────────── */
+
+/**
+ * Scans the entire form and returns an array of field descriptors:
+ * { type: 'select'|'text'|'textarea', element, questionText, combined }
+ * 
+ * This is the KEY fix: we build the full field map first,
+ * then process each field by its ACTUAL element type —
+ * so a select's label never accidentally routes to a text fill.
+ */
+async function buildFieldMap(page) {
+  const fields = [];
+
+  // ── Collect all selects ──────────────────────────────────────────────────
+  const selects = await page.$$("select");
+  for (const el of selects) {
+    try {
+      const name      = ((await el.getAttribute("name")) || "").toLowerCase();
+      const id        = ((await el.getAttribute("id"))   || "").toLowerCase();
+      const labelText = await getLabelText(el);
+      const combined  = `${name} ${id} ${labelText.toLowerCase()}`;
+      fields.push({ type: "select", element: el, questionText: labelText || name, combined });
+    } catch (e) {}
+  }
+
+  // ── Collect all text inputs / textareas ──────────────────────────────────
+  const inputs = await page$$$(page,
+    "input[type='text'], input[type='url'], input[type='number'], textarea"
+  );
+  for (const el of inputs) {
+    try {
+      const name        = ((await el.getAttribute("name"))        || "").toLowerCase();
+      const placeholder = ((await el.getAttribute("placeholder")) || "").toLowerCase();
+      const id          = ((await el.getAttribute("id"))          || "").toLowerCase();
+      const labelText   = await getLabelText(el);
+      const combined    = `${name} ${placeholder} ${id} ${labelText.toLowerCase()}`;
+
+      // CRITICAL: skip this text input if there is a <select> anywhere
+      // in the same ancestor chain (up to 6 levels) — the select handler owns that question
+      const hasSelectSibling = await el.evaluate(node => {
+        let p = node.parentElement;
+        let depth = 0;
+        while (p && depth < 6) {
+          if (p.querySelector("select")) return true;
+          p = p.parentElement;
+          depth++;
+        }
+        return false;
+      });
+      if (hasSelectSibling) continue;
+
+      fields.push({ type: "text", element: el, questionText: labelText || placeholder || name, combined });
+    } catch (e) {}
+  }
+
+  return fields;
+}
+
+// Helper: page.$$ wrapper with selector
+async function page$$$(page, selector) {
+  return page.$$(selector);
+}
+
+/* ─────────────────────────────────────────────
    AI QUESTION ANSWERING
-   TEXT INPUTS and SELECTS are handled in
-   completely separate passes — no overlap.
 ───────────────────────────────────────────── */
 
 async function answerCustomQuestions(page) {
@@ -211,102 +270,61 @@ async function answerCustomQuestions(page) {
     : "";
 
   const qaLog = [];
+  const fields = await buildFieldMap(page);
 
-  // ── PASS 1: Text inputs and textareas only ───────────────────────────────
-  // We explicitly check tagName so a select's container label never
-  // causes a text fill attempt on the wrong element type.
-  const textInputs = await page.$$(
-    "input[type='text'], input[type='url'], textarea"
-  );
-
-  for (const input of textInputs) {
+  for (const field of fields) {
     try {
-      // Double-check: skip anything that is actually a select (safety net)
-      if (await isSelectElement(input)) continue;
+      const { type, element, questionText, combined } = field;
 
-      const name        = ((await input.getAttribute("name"))        || "").toLowerCase();
-      const placeholder = ((await input.getAttribute("placeholder")) || "").toLowerCase();
-      const id          = ((await input.getAttribute("id"))          || "").toLowerCase();
-      const labelText   = await getLabelText(input);
-      const combined    = `${name} ${placeholder} ${id} ${labelText.toLowerCase()}`;
-
-      if (isBlocked(combined))  { console.log(`🚫 Blocked field skipped: "${labelText || name}"`); continue; }
-      if (isStandard(combined)) continue; // already handled by fillTextFields
-
-      const currentValue = await input.inputValue().catch(() => "");
-      if (currentValue && currentValue.trim()) continue;
-
-      const questionText = labelText || placeholder || name;
+      if (isBlocked(combined))  { console.log(`🚫 Blocked: "${questionText}"`); continue; }
+      if (isStandard(combined)) continue;
       if (!questionText || questionText.trim().length < 3) continue;
 
-      // ── CRITICAL CHECK: confirm this input does NOT belong to a select ──
-      // Some Greenhouse forms render a hidden text input alongside a <select>
-      // with the same label. We skip those.
-      const siblingSelect = await input.evaluate(node => {
-        const parent = node.closest(
-          ".field, .form-group, .application-question, li, .s-grid-field, div"
-        );
-        if (!parent) return false;
-        return parent.querySelector("select") !== null;
-      });
-      if (siblingSelect) continue; // let the select pass handle this question
-
-      console.log(`🤖 AI answering (text): "${questionText}"`);
-      const answer = await generateAIAnswer(questionText, jobDescription);
-
-      if (answer) {
-        await input.fill(answer).catch(() => {});
-        qaLog.push({ question: questionText, answer });
-        console.log(`   ✅ "${answer.substring(0, 80)}${answer.length > 80 ? "..." : ""}"`);
-      }
-    } catch (e) {}
-  }
-
-  // ── PASS 2: Select dropdowns only ───────────────────────────────────────
-  const selects = await page.$$("select");
-
-  for (const select of selects) {
-    try {
-      const name      = ((await select.getAttribute("name")) || "").toLowerCase();
-      const id        = ((await select.getAttribute("id"))   || "").toLowerCase();
-      const labelText = await getLabelText(select);
-      const combined  = `${name} ${id} ${labelText.toLowerCase()}`;
-
-      if (isBlocked(combined))  { console.log(`🚫 Blocked select skipped: "${labelText || name}"`); continue; }
-
-      // Get all meaningful options (filter out placeholder entries)
-      const options = await select.evaluate(el => {
-        return Array.from(el.options)
-          .map(o => ({ value: o.value, text: o.text.trim() }))
-          .filter(o =>
-            o.value &&
-            o.text &&
-            !/^select|^choose|^auswählen|^wählen\s|^--/i.test(o.text)
-          );
-      });
-
-      if (options.length === 0) continue;
-
-      // Skip if already has a real value selected
-      const currentVal = await select.evaluate(el => el.value);
-      if (currentVal && currentVal.trim() && currentVal !== "0") continue;
-
-      const questionText = labelText || name;
-      if (!questionText || questionText.trim().length < 3) continue;
-
-      console.log(`🤖 AI selecting (dropdown): "${questionText}"`);
-      const bestOption = await pickBestSelectOption(questionText, options, jobDescription);
-
-      if (bestOption) {
-        await select.selectOption(bestOption).catch(() => {});
-        // Trigger change event so React/Vue forms register the selection
-        await select.evaluate(el => {
-          el.dispatchEvent(new Event("change", { bubbles: true }));
-          el.dispatchEvent(new Event("input",  { bubbles: true }));
+      if (type === "select") {
+        // ── Handle <select> dropdown ───────────────────────────────────────
+        const options = await element.evaluate(el => {
+          return Array.from(el.options)
+            .map(o => ({ value: o.value, text: o.text.trim() }))
+            .filter(o =>
+              o.value &&
+              o.text &&
+              !/^select|^choose|^auswählen|^wählen\s|^--/i.test(o.text)
+            );
         });
-        const selectedText = options.find(o => o.value === bestOption)?.text || bestOption;
-        qaLog.push({ question: questionText, answer: selectedText });
-        console.log(`   ✅ Selected: "${selectedText}"`);
+        if (options.length === 0) continue;
+
+        const currentVal = await element.evaluate(el => el.value);
+        if (currentVal && currentVal.trim() && currentVal !== "0") continue;
+
+        console.log(`🤖 AI selecting (dropdown): "${questionText}"`);
+        const bestOption = await pickBestSelectOption(questionText, options, jobDescription);
+
+        if (bestOption) {
+          await element.selectOption(bestOption).catch(() => {});
+          // Fire change + input events so React/Vue frameworks register the value
+          await element.evaluate(el => {
+            el.dispatchEvent(new Event("change", { bubbles: true }));
+            el.dispatchEvent(new Event("input",  { bubbles: true }));
+          });
+          await new Promise(r => setTimeout(r, 300)); // brief pause for React state update
+          const selectedText = options.find(o => o.value === bestOption)?.text || bestOption;
+          qaLog.push({ question: questionText, answer: selectedText });
+          console.log(`   ✅ Selected: "${selectedText}"`);
+        }
+
+      } else {
+        // ── Handle text input / textarea ───────────────────────────────────
+        const currentVal = await element.inputValue().catch(() => "");
+        if (currentVal && currentVal.trim()) continue;
+
+        console.log(`🤖 AI answering (text): "${questionText}"`);
+        const answer = await generateAIAnswer(questionText, jobDescription);
+
+        if (answer) {
+          await element.fill(answer).catch(() => {});
+          qaLog.push({ question: questionText, answer });
+          console.log(`   ✅ "${answer.substring(0, 80)}${answer.length > 80 ? "..." : ""}"`);
+        }
       }
     } catch (e) {}
   }
@@ -335,20 +353,26 @@ ${JSON.stringify(master)}
 JOB DESCRIPTION:
 ${jobDescription}
 
-RULES:
-- Answer ONLY the question asked. No preamble, no labels, no "Answer:".
-- Keep answers concise (1-4 sentences unless clearly a long-form essay question).
-- For yes/no questions → "Yes" or "No" only.
+ANSWER RULES — follow these exactly:
+- Answer ONLY the question. No preamble, no "Answer:", no labels.
+- For yes/no questions: answer "Yes" or "No" only.
+- For notice period / when can you start / earliest start date → answer: "Immediately."
 - For salary/compensation → "Open to discussion based on the role and total package."
-- For notice period → "30 days."
-- For work authorization / visa → "I am based in India and open to fully remote roles globally."
+- For work authorization / visa / right to work → "I am based in India and open to fully remote roles globally."
 - For location/city → "New Delhi, India."
 - For country → "India."
-- For "why do you want to work here" → 2-3 relevant sentences using the job description.
-- For hobby/fun fact → 1-2 genuine sentences based on the candidate profile.
-- For "how did you find us" → "Through an online job board."
+- For "why do you want to work here" → 2-3 sentences using the job description.
+- For hobby/fun fact → 1-2 genuine sentences from the candidate profile.
+- For "how did you find us" / source → "Through an online job board."
+- For experience questions about skills listed in the profile → answer "Yes."
+  The candidate has experience with: Google Ads, Meta Ads, LinkedIn Ads, TikTok, Snapchat,
+  Pinterest, Reddit, Programmatic (DV360), CRM, HubSpot, Marketo, Salesforce, ABM,
+  demand generation, performance marketing, paid search, paid social, affiliate marketing,
+  email marketing, lifecycle marketing, marketing automation.
+- For experience questions about skills NOT in the profile → answer "No."
 - Never fabricate metrics not in the candidate profile.
 - If the question is in German, answer in German.
+- Keep answers concise (1-4 sentences unless clearly a long-form essay).
 - Sound professional and confident.
 `
         },
@@ -365,7 +389,6 @@ RULES:
 async function pickBestSelectOption(question, options, jobDescription) {
   try {
     const optionsList = options.map(o => `"${o.value}": "${o.text}"`).join("\n");
-
     const response = await openai.chat.completions.create({
       model: "gpt-4o-mini",
       temperature: 0.1,
@@ -381,9 +404,18 @@ ${JSON.stringify(master)}
 JOB DESCRIPTION:
 ${jobDescription}
 
-You will receive a dropdown question and its available options.
-Respond ONLY with the exact value string of the best matching option.
-No explanation. No quotes. Just the raw value string.
+SELECTION RULES:
+- Pick the option that best represents the candidate for this question.
+- For yes/no dropdowns: pick Yes if the skill/experience is in the profile, No otherwise.
+  Candidate HAS experience with: Google Ads, Meta Ads, LinkedIn Ads, TikTok, Snapchat,
+  Pinterest, Reddit, Programmatic (DV360), CRM, HubSpot, Marketo, Salesforce, ABM,
+  demand generation, performance marketing, paid search, paid social, affiliate marketing,
+  email marketing, lifecycle marketing, marketing automation, Apple Search Ads (ASA).
+- For notice period / start date dropdowns: pick the option closest to "Immediately" or shortest notice.
+- For work type dropdowns (full time / part time): pick Full Time / Vollzeit.
+- For location/region: pick the option that matches India or remote/global.
+- For GDPR/consent dropdowns: pick Yes / Ja / I agree / I consent.
+- Respond ONLY with the exact value string. Nothing else. No quotes.
 `
         },
         {
@@ -392,10 +424,9 @@ No explanation. No quotes. Just the raw value string.
         }
       ]
     });
-
     const picked = response.choices[0].message.content.trim().replace(/^"|"$/g, "");
     const valid  = options.find(o => o.value === picked);
-    return valid ? picked : options[0].value; // fallback to first real option
+    return valid ? picked : options[0].value;
   } catch (err) {
     console.error(`❌ AI select failed for "${question}":`, err.message);
     return options[0]?.value || null;
@@ -526,9 +557,9 @@ async function validateSubmission(page, clickAction, timeout = 15000) {
   await waitForCondition(() => submissionResponse !== null, timeout)
     .catch(() => { timedOut = true; });
 
-  const postErrors          = await scrapeFormErrors(page);
-  const urlAfter            = page.url();
-  const urlChanged          = urlAfter !== urlBefore;
+  const postErrors           = await scrapeFormErrors(page);
+  const urlAfter             = page.url();
+  const urlChanged           = urlAfter !== urlBefore;
   const confirmationDetected = await detectConfirmationPage(page);
 
   const screenshotPath = `${SCREENSHOT_DIR}/submit_${Date.now()}.png`;
@@ -546,7 +577,7 @@ async function validateSubmission(page, clickAction, timeout = 15000) {
   if (submissionResponse) {
     const s = submissionResponse.status;
     if (s >= 200 && s < 400) { success = true; reason = `Network POST confirmed — HTTP ${s}`; }
-    else                     { reason = `Network POST received HTTP ${s} — rejected by server`; }
+    else { reason = `Network POST received HTTP ${s} — rejected by server`; }
   } else if (confirmationDetected) {
     success = true;
     reason  = "Confirmation page/element detected in DOM";
@@ -588,15 +619,14 @@ async function applyToGreenhouse(page, jobUrl, resumePath) {
   await page.goto(jobUrl, { waitUntil: "load", timeout: 30000 });
   await page.waitForTimeout(2000);
 
-  // 1. Standard personal fields (English + German)
+  // 1. Standard personal fields
   console.log("📝 Filling standard fields...");
   await fillTextFields(page);
   await checkCheckboxes(page);
   await clickRadioIfRequired(page);
 
-  // 2. AI answers all custom questions
-  //    Pass 1 = text inputs (skips any that have a sibling <select>)
-  //    Pass 2 = select dropdowns (exclusively handled here)
+  // 2. AI handles all custom questions
+  //    buildFieldMap() ensures each question is routed to its correct element type
   console.log("🤖 Scanning for custom questions...");
   const qaLog = await answerCustomQuestions(page);
   console.log(`🤖 Custom questions answered: ${qaLog.length}`);
@@ -616,9 +646,10 @@ async function applyToGreenhouse(page, jobUrl, resumePath) {
   if (!submit) submit = await page.$("button:has-text('Send')");
   if (!submit) submit = await page.$("button:has-text('Absenden')");
   if (!submit) submit = await page.$("button:has-text('Bewerben')");
+  if (!submit) submit = await page.$("button:has-text('Bewerbung einreichen')");
   if (!submit) throw new Error("Submit button not found");
 
-  // 5. Submit with network-layer validation
+  // 5. Network-layer validated submit
   console.log("🚀 Clicking submit — monitoring network...");
   const result = await validateSubmission(page, async () => {
     await submit.click();
@@ -677,8 +708,8 @@ async function run() {
       const { result, qaLog } = await applyToGreenhouse(page, applyUrl, resumePath);
 
       // ✅ Only reaches here on confirmed network-layer submission
-      const today              = new Date().toISOString().split("T")[0];
-      const responsesForSheet  = formatQAForSheet(qaLog);
+      const today             = new Date().toISOString().split("T")[0];
+      const responsesForSheet = formatQAForSheet(qaLog);
 
       await sheets.spreadsheets.values.append({
         spreadsheetId,
@@ -689,7 +720,7 @@ async function run() {
             jobId,                 // Col A: Job_ID
             company,               // Col B: Company
             role,                  // Col C: Role
-            `resume_${jobId}.pdf`, // Col D: Resume_File
+            RESUME_DISPLAY_NAME,   // Col D: Resume_File — always Manoj_Kumar_CV.pdf
             "",                    // Col E: Cover_Letter_File (unused)
             responsesForSheet,     // Col F: Responses ← AI Q&A log
             today,                 // Col G: Application_Date
@@ -705,7 +736,6 @@ async function run() {
 
     } catch (err) {
       console.error(`❌ Application failed: ${err.message}`);
-      // NOT logging to sheet — submission unconfirmed
     }
   }
 
