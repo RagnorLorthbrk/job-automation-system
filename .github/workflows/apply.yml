@@ -47,3 +47,11 @@ jobs:
           name: greenhouse-debug
           path: output/screenshots/
           if-no-files-found: ignore
+
+     # 📸 Upload Debug HTML (IMPORTANT)
+      - name: Upload form debug HTML
+        uses: actions/upload-artifact@v4
+        with:
+          name: greenhouse-debug
+          path: form_debug.html
+          
