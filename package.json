@@ -5,6 +5,8 @@
   "dependencies": {
     "openai": "^4.0.0",
     "playwright": "^1.40.0",
-    "googleapis": "^133.0.0"
+    "googleapis": "^133.0.0",
+    "imap": "^0.8.19",
+    "mailparser": "^3.7.1"
   }
 }
