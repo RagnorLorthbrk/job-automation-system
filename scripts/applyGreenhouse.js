@@ -244,7 +244,8 @@ RULES:
           content: `Question: ${questionText}
 
 Options:
-${optionTexts.map((t, i) => `${i + 1}. ${t}`).join("\n")}
+${optionTexts.map((t,i) => `${i+1}. ${t}`).join("
+")}
 
 Respond with ONLY the exact option text.`
         }
