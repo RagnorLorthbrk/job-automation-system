@@ -241,13 +241,7 @@ RULES:
         },
         {
           role: "user",
-          content: `Question: ${questionText}
-
-Options:
-${optionTexts.map((t,i) => `${i+1}. ${t}`).join("
-")}
-
-Respond with ONLY the exact option text.`
+          content: "Question: " + questionText + "\n\nOptions:\n" + optionTexts.map((t,i) => (i+1) + ". " + t).join("\n") + "\n\nRespond with ONLY the exact option text."
         }
       ]
     });
