@@ -781,11 +781,20 @@ async function waitForVerificationField(page, ms = 10000) {
 async function fetchVerificationCode(timeoutMs = 90000) {
   const user = process.env.IMAP_USER || process.env.EMAIL_USER;
   const pass = process.env.IMAP_PASS || process.env.EMAIL_PASS;
-  const host = process.env.IMAP_HOST || "imap.gmail.com";
+  const host  = process.env.IMAP_HOST || "imap.gmail.com";
 
   if (!user || !pass) {
     console.log("⚠️  IMAP_USER / IMAP_PASS not set — cannot auto-retrieve code");
     return null;
+  }
+
+  // Log credential info (safely) to help debug auth issues
+  console.log(`📧 Connecting to ${host} as ${user}`);
+  console.log(`   Pass length: ${pass.length} chars | Has spaces: ${pass.includes(" ")}`);
+  // Gmail App Passwords must be 16 chars with NO spaces
+  const cleanPass = pass.replace(/\s/g, "");
+  if (cleanPass.length !== 16) {
+    console.log(`   ⚠️  App Password is ${cleanPass.length} chars — expected 16. Check your IMAP_PASS secret.`);
   }
 
   console.log(`📧 Polling Gmail for verification code (up to ${timeoutMs/1000}s)...`);
@@ -794,18 +803,26 @@ async function fetchVerificationCode(timeoutMs = 90000) {
   while (Date.now() - start < timeoutMs) {
     const code = await new Promise(resolve => {
       const imap = new Imap({
-        user, password: pass, host, port: 993,
-        tls: true, tlsOptions: { rejectUnauthorized: false },
+        user,
+        password: cleanPass,   // always strip spaces from app password
+        host, port: 993,
+        tls: true,
+        tlsOptions: { rejectUnauthorized: false },
+        authTimeout: 10000,
       });
 
       imap.once("ready", () => {
         imap.openBox("INBOX", false, err => {
           if (err) { imap.end(); resolve(null); return; }
 
-          // Look at emails received in the last 3 minutes
-          const since = new Date(Date.now() - 3 * 60 * 1000);
-          imap.search(["UNSEEN", ["SINCE", since]], (err, uids) => {
-            if (err || !uids || uids.length === 0) { imap.end(); resolve(null); return; }
+          // Search ALL recent emails (not just UNSEEN — code email might be read)
+          const since = new Date(Date.now() - 5 * 60 * 1000);
+          imap.search([["SINCE", since]], (err, uids) => {
+            if (err || !uids || uids.length === 0) {
+              console.log("   📭 No recent emails found");
+              imap.end(); resolve(null); return;
+            }
+            console.log(`   📬 Found ${uids.length} recent email(s), scanning...`);
 
             const f = imap.fetch(uids, { bodies: "" });
             let found = null;
@@ -814,22 +831,40 @@ async function fetchVerificationCode(timeoutMs = 90000) {
               msg.on("body", stream => {
                 simpleParser(stream, (err, mail) => {
                   if (err || found) return;
-                  const from    = (mail.from?.text    || "").toLowerCase();
-                  const subject = (mail.subject       || "").toLowerCase();
-                  const body    = (mail.text || mail.html || "");
+                  const from    = (mail.from?.text || "").toLowerCase();
+                  const subject = (mail.subject    || "").toLowerCase();
+                  const text    = mail.text  || "";
+                  const html    = mail.html  || "";
+                  const body    = text + " " + html;
+
+                  console.log(`   ✉️  From: ${from.substring(0,50)} | Subject: ${subject.substring(0,50)}`);
 
                   const isGreenhouse = from.includes("greenhouse") ||
-                                       subject.includes("verify") ||
+                                       subject.includes("verify")  ||
                                        subject.includes("bestätigung") ||
-                                       subject.includes("confirmation") ||
-                                       subject.includes("application");
+                                       subject.includes("confirm") ||
+                                       subject.includes("application") ||
+                                       subject.includes("code");
 
                   if (isGreenhouse) {
-                    // Match 6-8 uppercase alphanumeric codes
-                    const m = body.match(/([A-Z0-9]{6,8})/);
-                    if (m) {
-                      console.log(`   📬 Code found in email: ${m[1]}`);
-                      found = m[1];
+                    // Try multiple code patterns
+                    const patterns = [
+                      /([A-Z0-9]{8})/g,          // 8-char uppercase
+                      /([A-Z0-9]{6})/g,           // 6-char uppercase  
+                      /code[:\s]+([A-Z0-9]{6,8})/gi,  // "code: XXXXX"
+                      /(\d{6,8})/g,                  // pure digits
+                    ];
+                    for (const pattern of patterns) {
+                      const m = body.match(pattern);
+                      if (m) {
+                        // Take the first match that isn't a common number
+                        const candidate = (m[0].match(/[A-Z0-9]{6,8}/) || [])[0];
+                        if (candidate && !["UNSUBSCRIBE","GREENHOUSE"].includes(candidate)) {
+                          console.log(`   🎯 Code candidate: ${candidate}`);
+                          found = candidate;
+                          break;
+                        }
+                      }
                     }
                   }
                 });
@@ -841,12 +876,19 @@ async function fetchVerificationCode(timeoutMs = 90000) {
         });
       });
 
-      imap.once("error", err => { console.log("   IMAP error:", err.message); resolve(null); });
+      imap.once("error", err => {
+        console.log(`   ❌ IMAP error: ${err.message}`);
+        if (err.message.includes("Invalid credentials")) {
+          console.log("   💡 Fix: Go to Google Account → Security → 2-Step Verification → App Passwords");
+          console.log("   💡 Create an App Password for 'Mail' and save it as IMAP_PASS secret (no spaces)");
+        }
+        resolve(null);
+      });
       imap.connect();
     });
 
     if (code) return code;
-    console.log("   ⏳ Code not found yet, retrying in 5s...");
+    console.log("   ⏳ Retrying in 5s...");
     await new Promise(r => setTimeout(r, 5000));
   }
 
