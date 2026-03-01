@@ -7,9 +7,12 @@ jobs:
   automate:
     runs-on: ubuntu-latest
 
+    # 🔐 Make secrets available to ALL steps
     env:
       GOOGLE_SERVICE_ACCOUNT: ${{ secrets.GOOGLE_SERVICE_ACCOUNT }}
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      IMAP_USER: ${{ secrets.IMAP_USER }}
+      IMAP_PASS: ${{ secrets.IMAP_PASS }}
 
     steps:
       - name: Checkout Repository
@@ -38,7 +41,7 @@ jobs:
       - name: Apply to Greenhouse Jobs
         run: node scripts/applyGreenhouse.js
 
-      # 📦 Upload everything in output/ — screenshots, debug HTML, PDFs
+      # 🔹 Upload debug artifacts even if job fails
       - name: Upload Debug Artifacts
         if: always()
         uses: actions/upload-artifact@v4
