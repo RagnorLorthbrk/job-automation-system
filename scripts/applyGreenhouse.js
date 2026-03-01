@@ -136,56 +136,94 @@ async function getLabelText(elHandle) {
  */
 async function fillReactSelect(page, inputEl, searchTerm, questionText, jobDescription) {
   try {
-    // Step 1: Click to open the dropdown
-    await inputEl.click();
-    await page.waitForTimeout(500);
+    // Step 0: Close any previously open dropdown to avoid cross-contamination
+    await page.keyboard.press("Escape");
+    await page.waitForTimeout(200);
 
-    // Step 2: Read ALL real options from the DOM before typing anything
-    let realOptions = await page.evaluate(() => {
-      return Array.from(document.querySelectorAll('[role="option"], .select__option'))
+    // Step 1: Click THIS input to open its dropdown
+    await inputEl.click();
+    await page.waitForTimeout(600);
+
+    // Step 2: Read options SCOPED to the open menu container only
+    //   Use the select__menu that is a sibling/descendant of this input's container
+    let realOptions = await inputEl.evaluate(node => {
+      // Walk up to find the select container
+      let container = node.parentElement;
+      let depth = 0;
+      while (container && depth < 6) {
+        if (container.classList.contains("select-shell") ||
+            container.classList.contains("select__container") ||
+            container.getAttribute("class")?.includes("container")) {
+          break;
+        }
+        container = container.parentElement;
+        depth++;
+      }
+      if (!container) return [];
+      const menu = container.querySelector('[role="listbox"], .select__menu');
+      if (!menu) return [];
+      return Array.from(menu.querySelectorAll('[role="option"], .select__option'))
         .map(o => o.innerText.trim()).filter(t => t.length > 0);
     });
 
-    // If dropdown didn't open, try once more
+    // Fallback: if scoped search found nothing, try again after short wait
     if (realOptions.length === 0) {
-      await inputEl.click();
-      await page.waitForTimeout(600);
-      realOptions = await page.evaluate(() => {
-        return Array.from(document.querySelectorAll('[role="option"], .select__option'))
-          .map(o => o.innerText.trim()).filter(t => t.length > 0);
+      await page.waitForTimeout(400);
+      realOptions = await inputEl.evaluate(node => {
+        let container = node.parentElement;
+        let depth = 0;
+        while (container && depth < 8) {
+          const menu = container.querySelector('[role="listbox"], .select__menu');
+          if (menu) {
+            return Array.from(menu.querySelectorAll('[role="option"], .select__option'))
+              .map(o => o.innerText.trim()).filter(t => t.length > 0);
+          }
+          container = container.parentElement;
+          depth++;
+        }
+        return [];
       });
     }
 
     if (realOptions.length > 0) {
-      // Step 3: AI picks from the ACTUAL options on screen
-      console.log(`   📋 Real options: ${realOptions.join(" | ")}`);
+      console.log(`   📋 Real options (${realOptions.length}): ${realOptions.slice(0,8).join(" | ")}${realOptions.length > 8 ? "..." : ""}`);
+      // AI picks from the actual list
       searchTerm = await pickFromRealOptions(questionText, realOptions, jobDescription);
       console.log(`   🎯 AI chose: "${searchTerm}"`);
     } else {
-      console.log(`   ⚠️ Could not read options, using fallback term: "${searchTerm}"`);
+      console.log(`   ⚠️ No scoped options found, using fallback term: "${searchTerm}"`);
     }
 
-    // Step 4: Type chosen term to filter
+    // Step 3: Type to filter
     await inputEl.fill("");
     await inputEl.type(searchTerm, { delay: 50 });
     await page.waitForTimeout(500);
 
-    // Step 5: Click the matching option
-    const options = await page.$$('[role="option"], .select__option');
-    if (options.length === 0) {
-      await inputEl.press("Escape");
-      return null;
-    }
-
+    // Step 4: Click the matching option (scoped to this menu)
     let clicked = null;
-    for (const opt of options) {
+    const menuOptions = await inputEl.evaluate(node => {
+      let p = node.parentElement;
+      for (let i = 0; i < 8; i++) {
+        const menu = p.querySelector('[role="listbox"], .select__menu');
+        if (menu) {
+          return Array.from(menu.querySelectorAll('[role="option"], .select__option'))
+            .map(o => o.innerText.trim());
+        }
+        p = p.parentElement;
+      }
+      return [];
+    });
+
+    // Find in page and click by matching text
+    const allOpts = await page.$$('[role="option"], .select__option');
+    for (const opt of allOpts) {
       const text = await opt.innerText().catch(() => "");
       if (text.trim().toLowerCase() === searchTerm.toLowerCase()) {
         await opt.click(); clicked = text.trim(); break;
       }
     }
     if (!clicked) {
-      for (const opt of options) {
+      for (const opt of allOpts) {
         const text = await opt.innerText().catch(() => "");
         if (text.trim().toLowerCase().includes(searchTerm.toLowerCase()) ||
             searchTerm.toLowerCase().includes(text.trim().toLowerCase())) {
@@ -193,14 +231,14 @@ async function fillReactSelect(page, inputEl, searchTerm, questionText, jobDescr
         }
       }
     }
-    if (!clicked && options.length > 0) {
-      const text = await options[0].innerText().catch(() => "");
-      await options[0].click();
+    if (!clicked && allOpts.length > 0) {
+      const text = await allOpts[0].innerText().catch(() => "");
+      await allOpts[0].click();
       clicked = text.trim();
       console.log(`   ⚠️ Fallback: clicked first option "${clicked}"`);
     }
 
-    await page.waitForTimeout(300);
+    await page.waitForTimeout(400);
     return clicked;
   } catch (err) {
     console.log(`   ❌ React Select error for "${questionText}": ${err.message}`);
@@ -211,7 +249,6 @@ async function fillReactSelect(page, inputEl, searchTerm, questionText, jobDescr
 
 /**
  * AI picks the best option from the ACTUAL list visible in the dropdown.
- * This is the smart path — it sees exactly what Greenhouse renders.
  */
 async function pickFromRealOptions(questionText, optionTexts, jobDescription) {
   try {
@@ -225,19 +262,22 @@ async function pickFromRealOptions(questionText, optionTexts, jobDescription) {
 CANDIDATE: ${JSON.stringify(master)}
 JOB: ${jobDescription}
 
-You see the EXACT options available in a dropdown on the form.
-Pick the one that best fits the candidate. Return ONLY the exact option text, copied verbatim.
+You see the EXACT options in a dropdown. Pick the one that best fits.
+Return ONLY the exact option text, copied verbatim from the list.
 
 RULES:
-- yes/no: pick Yes-equivalent if skill in profile, No-equivalent otherwise.
+- yes/no or Ja/Nein: Ja/Yes if skill in profile, Nein/No otherwise.
   Candidate HAS: Google Ads, Apple Search Ads (ASA), Meta Ads, LinkedIn Ads, TikTok,
   Snapchat, Pinterest, Reddit, Programmatic (DV360), CRM, HubSpot, Marketo, Salesforce,
   ABM, demand gen, performance marketing, paid search, paid social, affiliate, email marketing.
-- region/location: pick option closest to India, South Asia, or Asia Pacific.
-- GDPR/consent/agreement: pick the affirmative option.
-- notice period / start date: pick shortest / immediately.
-- work type: pick full-time equivalent.
-- Respond with ONLY the exact text of your chosen option. Nothing else.`
+- region/location: pick option closest to India or Asia Pacific.
+- GDPR/consent/Datenschutz/Zustimmung: pick the affirmative/yes option.
+- notice/Kündigungsfrist/start date: pick shortest / sofort / immediately.
+- work type/Vollzeit: pick full-time equivalent.
+- Arbeitserlaubnis (work permit/visa): candidate is India-based, looking for remote work.
+  Pick option that means "not required" or "remote" or if forced pick the most neutral option.
+- WPP employee / Agentur: pick No / Nein / "I am not a current WPP employee".
+- Respond with ONLY the exact option text. Nothing else.`
         },
         {
           role: "user",
@@ -246,7 +286,6 @@ RULES:
       ]
     });
     const picked = response.choices[0].message.content.trim();
-    // Validate it's actually in the list
     const exact = optionTexts.find(t => t.toLowerCase() === picked.toLowerCase());
     const partial = optionTexts.find(t =>
       t.toLowerCase().includes(picked.toLowerCase()) ||
@@ -730,144 +769,73 @@ async function validateSubmission(page, clickAction, timeout = 15000) {
 
 /* ─────────────────────────────────────────────
    VERIFICATION CODE HANDLER
-   Greenhouse sometimes emails a code before
-   allowing submission. We read it via IMAP.
 ───────────────────────────────────────────── */
-
-/**
- * Checks if Greenhouse is showing a verification code input field.
- */
 async function isVerificationCodeRequired(page) {
   return page.evaluate(() => {
     const body = document.body.innerText.toLowerCase();
-    const hasVerifyText = body.includes("verification code") ||
-                          body.includes("verify your email") ||
-                          body.includes("enter the") ||
-                          body.includes("confirm your email") ||
-                          body.includes("security code") ||
-                          body.includes("8-character");
-    const hasCodeInput = !!document.querySelector(
-      'input[name*="code"], input[id*="code"], input[placeholder*="code"], input[placeholder*="Code"]'
-    );
-    return hasVerifyText || hasCodeInput;
+    return body.includes("verification code") || body.includes("8-character") ||
+           body.includes("verify your email") || body.includes("security code") ||
+           !!document.querySelector('input[name*="code"], input[id*="code"], input[placeholder*="ode"]');
   });
 }
 
-/**
- * Fetches the Greenhouse verification code from email via IMAP.
- * Requires IMAP_USER, IMAP_PASS, IMAP_HOST env vars.
- * Works with Gmail (use App Password, not account password).
- */
-async function fetchVerificationCode(timeoutMs = 60000) {
+async function fetchVerificationCode(timeoutMs = 90000) {
   const user = process.env.IMAP_USER || process.env.EMAIL_USER;
   const pass = process.env.IMAP_PASS || process.env.EMAIL_PASS;
   const host = process.env.IMAP_HOST || "imap.gmail.com";
-
-  if (!user || !pass) {
-    console.log("⚠️ IMAP_USER / IMAP_PASS not set — cannot fetch verification code");
-    return null;
-  }
-
+  if (!user || !pass) { console.log("⚠️ IMAP creds not set"); return null; }
   console.log(`📧 Waiting for verification code email (up to ${timeoutMs/1000}s)...`);
   const start = Date.now();
-
   while (Date.now() - start < timeoutMs) {
-    const code = await new Promise((resolve) => {
-      const imap = new Imap({
-        user, password: pass, host, port: 993, tls: true,
-        tlsOptions: { rejectUnauthorized: false },
-      });
-
+    const code = await new Promise(resolve => {
+      const imap = new Imap({ user, password: pass, host, port: 993, tls: true, tlsOptions: { rejectUnauthorized: false } });
       imap.once("ready", () => {
-        imap.openBox("INBOX", false, (err) => {
+        imap.openBox("INBOX", false, err => {
           if (err) { imap.end(); resolve(null); return; }
-
-          // Search for unseen emails from Greenhouse in the last 5 minutes
           const since = new Date(Date.now() - 5 * 60 * 1000);
           imap.search(["UNSEEN", ["SINCE", since]], (err, results) => {
-            if (err || !results || results.length === 0) { imap.end(); resolve(null); return; }
-
+            if (err || !results?.length) { imap.end(); resolve(null); return; }
             const fetch = imap.fetch(results, { bodies: "" });
             let found = null;
-
-            fetch.on("message", (msg) => {
-              msg.on("body", (stream) => {
+            fetch.on("message", msg => {
+              msg.on("body", stream => {
                 simpleParser(stream, (err, mail) => {
                   if (err) return;
                   const from = (mail.from?.text || "").toLowerCase();
-                  const subject = (mail.subject || "").toLowerCase();
-                  const text = mail.text || mail.html || "";
-
-                  if (from.includes("greenhouse") || subject.includes("verify") ||
-                      subject.includes("application") || subject.includes("confirm")) {
-                    // Extract 6-8 character alphanumeric code
-                    const match = text.match(/([A-Z0-9]{6,8})/);
-                    if (match) {
-                      console.log(`   📬 Found code in email: ${match[1]}`);
-                      found = match[1];
-                    }
+                  const subj = (mail.subject || "").toLowerCase();
+                  const text = mail.text || "";
+                  if (from.includes("greenhouse") || subj.includes("verify") || subj.includes("application")) {
+                    const match = text.match(/\b([A-Z0-9]{6,8})\b/);
+                    if (match) { console.log(`   📬 Code found: ${match[1]}`); found = match[1]; }
                   }
                 });
               });
             });
-
             fetch.once("end", () => { imap.end(); resolve(found); });
           });
         });
       });
-
       imap.once("error", () => resolve(null));
       imap.connect();
     });
-
     if (code) return code;
-
-    // Wait 5s before checking again
     await new Promise(r => setTimeout(r, 5000));
   }
-
-  console.log("⚠️ Timed out waiting for verification code email");
   return null;
 }
 
-/**
- * Handles the verification code flow if Greenhouse requests it.
- * Called after clicking Submit — if a code field appears, fetch and enter it.
- */
 async function handleVerificationCode(page) {
-  const needed = await isVerificationCodeRequired(page);
-  if (!needed) return false;
-
-  console.log("🔐 Verification code required — fetching from email...");
-  const code = await fetchVerificationCode(90000); // wait up to 90s
-
-  if (!code) {
-    console.log("❌ Could not retrieve verification code");
-    return false;
-  }
-
-  // Find the code input field and fill it
-  const codeInput = await page.$(
-    'input[name*="code"], input[id*="code"], input[placeholder*="code"], input[placeholder*="Code"], input[type="text"][maxlength="8"], input[type="text"][maxlength="6"]'
-  );
-
-  if (!codeInput) {
-    console.log("❌ Could not find verification code input field");
-    return false;
-  }
-
-  await codeInput.fill(code);
+  if (!await isVerificationCodeRequired(page)) return false;
+  console.log("🔐 Verification code required...");
+  const code = await fetchVerificationCode();
+  if (!code) { console.log("❌ Could not get code"); return false; }
+  const input = await page.$('input[name*="code"], input[id*="code"], input[type="text"][maxlength="8"], input[type="text"][maxlength="6"]');
+  if (!input) { console.log("❌ Code input not found"); return false; }
+  await input.fill(code);
   await page.waitForTimeout(500);
-  console.log(`✅ Entered verification code: ${code}`);
-
-  // Click the confirm/submit button for the code
-  const confirmBtn = await page.$('button[type="submit"], button:has-text("Confirm"), button:has-text("Verify"), button:has-text("Submit")');
-  if (confirmBtn) {
-    await confirmBtn.click();
-    await page.waitForTimeout(2000);
-    console.log("✅ Submitted verification code");
-  }
-
+  console.log(`✅ Entered code: ${code}`);
+  const btn = await page.$('button[type="submit"], button:has-text("Confirm"), button:has-text("Verify")');
+  if (btn) { await btn.click(); await page.waitForTimeout(2000); }
   return true;
 }
 
@@ -916,15 +884,12 @@ async function applyToGreenhouse(page, jobUrl, resumePath) {
   console.log("🚀 Clicking submit — monitoring network...");
   const result = await validateSubmission(page, () => submit.click());
 
-  // 6. Handle verification code if Greenhouse sends one
   if (!result.success) {
     const codeHandled = await handleVerificationCode(page);
     if (codeHandled) {
-      // After entering code, check for confirmation
       await page.waitForTimeout(3000);
-      const confirmed = await detectConfirmationPage(page);
-      if (confirmed) {
-        console.log("✅ Application submitted after verification code!");
+      if (await detectConfirmationPage(page)) {
+        console.log("✅ Submitted after email verification!");
         return { result: { success: true, reason: "Submitted after email verification code" }, qaLog };
       }
     }
