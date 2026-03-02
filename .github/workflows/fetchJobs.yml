@@ -28,5 +28,7 @@ jobs:
       - name: Debug — list scripts folder
         run: ls -la scripts/
 
+      - name: Debug files
+        run: ls -la scripts/
       - name: Fetch Jobs from All Sources
         run: node scripts/fetchJobs.js
