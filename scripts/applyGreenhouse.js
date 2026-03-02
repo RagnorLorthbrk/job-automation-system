@@ -939,15 +939,9 @@ async function handleVerificationCode(page) {
     return false;
   }
 
-  console.log("   🔐 Verification code field found! Fetching from email...");
-  const code = await fetchVerificationCode(90000);
+  console.log("   🔐 Verification code field found! Starting email fetch in parallel...");
 
-  if (!code) {
-    console.log("   ❌ Could not retrieve verification code from email");
-    return false;
-  }
-
-  // Find the input field
+  // Find the input field NOW — while the page is still in the right state
   const codeInput = await page.$(
     'input[name*="code"], input[id*="code"], ' +
     'input[placeholder*="ode"], input[aria-label*="ode"], ' +
@@ -959,25 +953,53 @@ async function handleVerificationCode(page) {
     return false;
   }
 
-  await codeInput.fill(code);
-  await page.waitForTimeout(600);
+  console.log("   ✅ Code input field located — now fetching code from email...");
+
+  // Fetch the code (field is already located, page stays open)
+  const code = await fetchVerificationCode(90000);
+
+  if (!code) {
+    console.log("   ❌ Could not retrieve verification code from email");
+    return false;
+  }
+
+  // Re-check field is still there (page should be unchanged)
+  const inputStillThere = await page.$(
+    'input[name*="code"], input[id*="code"], ' +
+    'input[placeholder*="ode"], input[aria-label*="ode"], ' +
+    'input[type="text"][maxlength="8"], input[type="text"][maxlength="6"]'
+  );
+
+  const target = inputStillThere || codeInput;
+
+  // Scroll to it and fill
+  await target.scrollIntoViewIfNeeded().catch(() => {});
+  await target.click();
+  await page.waitForTimeout(300);
+  await target.fill("");
+  await target.type(code, { delay: 80 });
+  await page.waitForTimeout(500);
   console.log(`   ✅ Entered code: ${code}`);
 
-  // Click the confirm/submit button
+  // Click submit
   const confirmBtn = await page.$('button[type="submit"]') ||
+                     await page.$('button:has-text("Bewerbung einreichen")') ||
+                     await page.$('button:has-text("Submit")') ||
                      await page.$('button:has-text("Confirm")') ||
                      await page.$('button:has-text("Bestätigen")') ||
-                     await page.$('button:has-text("Verify")') ||
-                     await page.$('button:has-text("Bewerbung einreichen")');
+                     await page.$('button:has-text("Verify")');
 
   if (confirmBtn) {
     await confirmBtn.click();
     await page.waitForTimeout(3000);
-    console.log("   ✅ Confirmation submitted");
+    console.log("   ✅ Form resubmitted with verification code");
+  } else {
+    console.log("   ⚠️  No submit button found after entering code");
   }
 
   return true;
 }
+
 
 /* ─────────────────────────────────────────────
    APPLICATION SUBMISSION
