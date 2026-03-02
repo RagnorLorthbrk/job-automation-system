@@ -865,7 +865,7 @@ async function fetchVerificationCode(timeoutMs = 90000) {
 
                     // Strategy 1: digit sequence right after "code" keyword
                     let m = cleanText.match(/(?:code|Code|CODE)\s*[:\-]?\s*([A-Za-z0-9]{6,8})/);
-                    if (m) { console.log("   🎯 Strategy 1: " + m[1]); done(m[1].toUpperCase()); return; }
+                    if (m) { console.log("   🎯 Strategy 1: " + m[1]); done(m[1]); return; }  // preserve case!
 
                     // Strategy 2: any pure-digit run of 6-8 chars (most common Greenhouse format)
                     m = cleanText.match(/([0-9]{6,8})/);
@@ -882,10 +882,10 @@ async function fetchVerificationCode(timeoutMs = 90000) {
                     const tokens = cleanText.split(/\s+/);
                     const candidate = tokens.find(t =>
                       t.length >= 6 && t.length <= 8 &&
-                      /^[A-Z0-9]+$/.test(t.toUpperCase()) &&
+                      /^[A-Za-z0-9]+$/.test(t) &&          // allow mixed case like W00NdCLi
                       !BLACKLIST.has(t.toUpperCase())
                     );
-                    if (candidate) { console.log("   🎯 Strategy 3: " + candidate); done(candidate.toUpperCase()); return; }
+                    if (candidate) { console.log("   🎯 Strategy 3: " + candidate); done(candidate); return; }  // preserve original case!
 
                     console.log("   ⚠️  Could not extract code from Greenhouse email");
                     done(null);
@@ -996,7 +996,7 @@ async function handleVerificationCode(page) {
   if (splitInputs.length > 0) {
     // Split input — type one character per box
     console.log(`   ⌨️  Split input detected (${splitInputs.length} boxes) — typing char by char...`);
-    const chars = code.split("");
+    const chars = code.split("");  // use original case — DO NOT toUpperCase()
     for (let i = 0; i < splitInputs.length && i < chars.length; i++) {
       await splitInputs[i].scrollIntoViewIfNeeded().catch(() => {});
       await splitInputs[i].click();
@@ -1015,22 +1015,31 @@ async function handleVerificationCode(page) {
   }
   
   await page.waitForTimeout(500);
-  console.log(`   ✅ Entered code: ${code}`);
+  console.log("   ✅ Entered code (exact): " + code);
 
-  // Click submit
-  const confirmBtn = await page.$('button[type="submit"]') ||
-                     await page.$('button:has-text("Bewerbung einreichen")') ||
-                     await page.$('button:has-text("Submit")') ||
-                     await page.$('button:has-text("Confirm")') ||
-                     await page.$('button:has-text("Bestätigen")') ||
-                     await page.$('button:has-text("Verify")');
+  // After filling the code boxes, the page submit button (Bewerbung einreichen) 
+  // is the same one as before — just click it once to resubmit
+  // Use last visible submit button to avoid clicking a hidden one
+  const allSubmitBtns = await page.$$('button[type="submit"], input[type="submit"]');
+  let confirmBtn = null;
+  for (const btn of allSubmitBtns) {
+    const visible = await btn.isVisible().catch(() => false);
+    if (visible) { confirmBtn = btn; }  // take the last visible one
+  }
 
   if (confirmBtn) {
+    const btnText = await confirmBtn.innerText().catch(() => "");
+    console.log("   🖱️  Clicking submit: " + btnText.trim());
     await confirmBtn.click();
-    await page.waitForTimeout(3000);
+    await page.waitForTimeout(4000);
     console.log("   ✅ Form resubmitted with verification code");
   } else {
-    console.log("   ⚠️  No submit button found after entering code");
+    // Fallback: press Enter in the last security input box
+    if (splitInputs.length > 0) {
+      await splitInputs[splitInputs.length - 1].press("Enter");
+      await page.waitForTimeout(3000);
+      console.log("   ✅ Pressed Enter to submit");
+    }
   }
 
   return true;
