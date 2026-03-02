@@ -22,11 +22,11 @@ jobs:
         with:
           node-version: 18
 
+      - name: Show ALL files
+        run: find . -type f | sort
+
       - name: Install Dependencies
         run: npm install
-
-      - name: Show ALL files in repo
-        run: find . -name "*.js" | sort
 
       - name: Fetch Jobs from All Sources
         run: node scripts/fetchjobs.js
