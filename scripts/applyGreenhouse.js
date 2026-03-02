@@ -941,15 +941,30 @@ async function handleVerificationCode(page) {
 
   console.log("   🔐 Verification code field found! Starting email fetch in parallel...");
 
-  // Find the input field NOW — while the page is still in the right state
+  // Dump ALL inputs on the page so we can see what's actually there
+  const allInputsDebug = await page.evaluate(() => {
+    return Array.from(document.querySelectorAll("input")).map(i => ({
+      type: i.type, name: i.name, id: i.id,
+      placeholder: i.placeholder, maxlength: i.maxLength,
+      ariaLabel: i.getAttribute("aria-label"),
+      className: i.className.substring(0, 60),
+      visible: i.offsetParent !== null,
+    }));
+  });
+  console.log("   🔍 All inputs on page: " + JSON.stringify(allInputsDebug));
+
+  // Try broad selector — any visible text input not already filled
   const codeInput = await page.$(
     'input[name*="code"], input[id*="code"], ' +
     'input[placeholder*="ode"], input[aria-label*="ode"], ' +
-    'input[type="text"][maxlength="8"], input[type="text"][maxlength="6"]'
+    'input[type="text"][maxlength="8"], input[type="text"][maxlength="6"], ' +
+    'input[name*="security"], input[id*="security"], ' +
+    'input[name*="verify"], input[id*="verify"], ' +
+    'input[name*="token"], input[id*="token"]'
   );
 
   if (!codeInput) {
-    console.log("   ❌ Code input field not found in DOM");
+    console.log("   ❌ Code input field not found in DOM — check input dump above");
     return false;
   }
 
