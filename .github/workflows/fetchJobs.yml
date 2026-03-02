@@ -3,7 +3,7 @@ name: Daily Job Intake (Multi-Source)
 on:
   workflow_dispatch:
   schedule:
-    - cron: "0 5 * * *"   # 5 AM UTC daily — before the apply pipeline runs
+    - cron: "0 5 * * *"   # 5 AM UTC daily
 
 jobs:
   intake:
@@ -24,6 +24,9 @@ jobs:
 
       - name: Install Dependencies
         run: npm install
+
+      - name: Debug — list scripts folder
+        run: ls -la scripts/
 
       - name: Fetch Jobs from All Sources
         run: node scripts/fetchJobs.js
