@@ -990,21 +990,30 @@ async function handleVerificationCode(page) {
     return false;
   }
 
-  // Re-check field is still there (page should be unchanged)
-  const inputStillThere = await page.$(
-    'input[name*="code"], input[id*="code"], ' +
-    'input[placeholder*="ode"], input[aria-label*="ode"], ' +
-    'input[type="text"][maxlength="8"], input[type="text"][maxlength="6"]'
-  );
-
-  const target = inputStillThere || codeInput;
-
-  // Scroll to it and fill
-  await target.scrollIntoViewIfNeeded().catch(() => {});
-  await target.click();
-  await page.waitForTimeout(300);
-  await target.fill("");
-  await target.type(code, { delay: 80 });
+  // Detect if it's a split input (one box per character) or a single field
+  const splitInputs = await page.$$('input[id^="security-input-"]');
+  
+  if (splitInputs.length > 0) {
+    // Split input — type one character per box
+    console.log(`   ⌨️  Split input detected (${splitInputs.length} boxes) — typing char by char...`);
+    const chars = code.split("");
+    for (let i = 0; i < splitInputs.length && i < chars.length; i++) {
+      await splitInputs[i].scrollIntoViewIfNeeded().catch(() => {});
+      await splitInputs[i].click();
+      await page.waitForTimeout(80);
+      await splitInputs[i].fill(chars[i]);
+      await page.waitForTimeout(80);
+    }
+  } else {
+    // Single input field — fill normally
+    const target = codeInput;
+    await target.scrollIntoViewIfNeeded().catch(() => {});
+    await target.click();
+    await page.waitForTimeout(300);
+    await target.fill("");
+    await target.type(code, { delay: 80 });
+  }
+  
   await page.waitForTimeout(500);
   console.log(`   ✅ Entered code: ${code}`);
 
@@ -1089,8 +1098,11 @@ async function applyToGreenhouse(page, jobUrl, resumePath) {
       // Also check for any success-like text broadly
       const pageText = await page.evaluate(() => document.body.innerText.toLowerCase());
       const successKeywords = [
-        "thank", "submitted", "received", "success", "bestätigt",
-        "eingereicht", "erhalten", "danke", "bewerbung", "confirmation"
+        "thank you for applying", "application received", "successfully submitted",
+        "your application has been", "we have received your",
+        "vielen dank für deine bewerbung", "bewerbung eingegangen",
+        "erfolgreich eingereicht", "bewerbung erhalten",
+        "we'll be in touch", "next steps", "what happens next",
       ];
       const textSuccess = successKeywords.some(k => pageText.includes(k));
 
@@ -1106,8 +1118,22 @@ async function applyToGreenhouse(page, jobUrl, resumePath) {
         };
       }
 
-      // Take a screenshot to see what the page looks like
-      await page.screenshot({ path: "output/screenshots/post_code_" + Date.now() + ".png", fullPage: true }).catch(() => {});
+      // Take a screenshot and dump more page text to diagnose
+      const screenshotPath = "output/screenshots/post_code_" + Date.now() + ".png";
+      await page.screenshot({ path: screenshotPath, fullPage: true }).catch(() => {});
+      console.log(`   📸 Post-code screenshot: ${screenshotPath}`);
+      console.log(`   📄 Full page text: ${pageText.substring(0, 800)}`);
+      
+      // Wait a bit more and check again — page might still be loading
+      await page.waitForTimeout(5000);
+      const pageText2 = await page.evaluate(() => document.body.innerText.toLowerCase());
+      const textSuccess2 = successKeywords.some(k => pageText2.includes(k));
+      const confirmed2 = await detectConfirmationPage(page);
+      if (confirmed2 || textSuccess2) {
+        console.log("✅ Application confirmed on second check!");
+        return { result: { success: true, reason: "Submitted after email verification code" }, qaLog };
+      }
+      
       throw new Error("Code entered but confirmation page not detected — check post_code screenshot");
     }
 
