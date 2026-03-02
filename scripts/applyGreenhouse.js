@@ -847,24 +847,39 @@ async function fetchVerificationCode(timeoutMs = 90000) {
                                        subject.includes("code");
 
                   if (isGreenhouse) {
-                    // Try multiple code patterns
-                    const patterns = [
-                      /([A-Z0-9]{8})/g,          // 8-char uppercase
-                      /([A-Z0-9]{6})/g,           // 6-char uppercase  
-                      /code[:\s]+([A-Z0-9]{6,8})/gi,  // "code: XXXXX"
-                      /(\d{6,8})/g,                  // pure digits
-                    ];
-                    for (const pattern of patterns) {
-                      const m = body.match(pattern);
-                      if (m) {
-                        // Take the first match that isn't a common number
-                        const candidate = (m[0].match(/[A-Z0-9]{6,8}/) || [])[0];
-                        if (candidate && !["UNSUBSCRIBE","GREENHOUSE"].includes(candidate)) {
-                          console.log(`   🎯 Code candidate: ${candidate}`);
-                          found = candidate;
-                          break;
-                        }
+                    // Strip HTML tags and normalize whitespace for clean regex matching
+                    const cleanText = body
+                      .replace(/<[^>]+>/g, " ")
+                      .replace(/&nbsp;/g, " ")
+                      .replace(/&#[0-9]+;/g, " ")
+                      .replace(/\s+/g, " ")
+                      .trim();
+
+                    // Log snippet to help debug if extraction fails
+                    console.log("   📄 Body (stripped): " + cleanText.substring(0, 400));
+
+                    // Extraction patterns — most specific first
+                    const BLACKLIST = new Set([
+                      "UNSUBSCRIBE","GREENHOUSE","SECURITY","APPLICATION",
+                      "BROWSER","COMPANY","POSITION","CONFIRM","REGARDS"
+                    ]);
+
+                    // Pattern 1: explicit "code" label nearby (most reliable)
+                    let codeMatch = cleanText.match(/(?:code|Code|CODE)[^a-zA-Z0-9]*([A-Za-z0-9]{6,8})/) ||
+                                    cleanText.match(/([A-Za-z0-9]{8})/) ||
+                                    cleanText.match(/([A-Za-z0-9]{6})/) ||
+                                    cleanText.match(/([0-9]{6,8})/);
+
+                    if (codeMatch) {
+                      const candidate = (codeMatch[1] || codeMatch[0]).toUpperCase();
+                      if (candidate.length >= 6 && !BLACKLIST.has(candidate)) {
+                        console.log("   🎯 Code extracted: " + candidate);
+                        found = candidate;
+                      } else {
+                        console.log("   ⚠️  Candidate blacklisted: " + candidate);
                       }
+                    } else {
+                      console.log("   ⚠️  No code pattern matched");
                     }
                   }
                 });
