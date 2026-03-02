@@ -1198,39 +1198,35 @@ async function run() {
       const today             = new Date().toISOString().split("T")[0];
       const responsesForSheet = formatQAForSheet(qaLog);
 
-      // Capture the final confirmation URL/message from the page
+      // page.url() IS the confirmation URL — Greenhouse redirects to /confirmation
       const confirmationUrl = page.url();
-      const confirmationMsg = await page.evaluate(() => {
-        // Try to find a thank-you or confirmation message
-        const selectors = [
-          '[class*="confirmation"]', '[class*="success"]', '[class*="thank"]',
-          'h1', 'h2', '.app-title'
-        ];
-        for (const sel of selectors) {
-          const el = document.querySelector(sel);
-          if (el && el.innerText && el.innerText.trim().length > 3) {
-            return el.innerText.trim().substring(0, 200);
-          }
-        }
-        return document.title || "";
-      }).catch(() => "");
 
+      // Sheet columns (matching Applications tab headers):
+      // A: Job_ID | B: Company | C: Role | D: Resume_File | E: Cover_Letter_File
+      // F: Responses | G: Application_Date | H: Application_Status
+      // I: Confirmation_URL | J: Notes
       await sheets.spreadsheets.values.append({
         spreadsheetId,
         range: "Applications!A1",
         valueInputOption: "USER_ENTERED",
         requestBody: {
           values: [[
-            jobId, company, role, RESUME_DISPLAY_NAME, confirmationUrl,
-            responsesForSheet, today, "SUBMITTED",
-            result.reason + (confirmationMsg ? " | " + confirmationMsg : "")
+            jobId,              // A: Job_ID
+            company,            // B: Company
+            role,               // C: Role
+            RESUME_DISPLAY_NAME,// D: Resume_File
+            "",                 // E: Cover_Letter_File (unused)
+            responsesForSheet,  // F: Responses
+            today,              // G: Application_Date
+            "SUBMITTED",        // H: Application_Status
+            confirmationUrl,    // I: Confirmation_URL  ← replaces Notes
+            result.reason       // J: Notes
           ]]
         }
       });
 
       console.log(`✅ Application logged to sheet`);
-      console.log(`📋 Confirmation URL: ${confirmationUrl}`);
-      console.log(`📋 Confirmation msg: ${confirmationMsg}`);
+      console.log(`📋 Confirmation URL saved: ${confirmationUrl}`);
       appliedCount++;
 
     } catch (err) {
