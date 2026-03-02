@@ -953,15 +953,27 @@ async function handleVerificationCode(page) {
   });
   console.log("   🔍 All inputs on page: " + JSON.stringify(allInputsDebug));
 
-  // Try broad selector — any visible text input not already filled
-  const codeInput = await page.$(
+  // Wait up to 5s for the code input to appear (it may render after submit click)
+  const codeInput = await page.waitForSelector(
     'input[name*="code"], input[id*="code"], ' +
     'input[placeholder*="ode"], input[aria-label*="ode"], ' +
     'input[type="text"][maxlength="8"], input[type="text"][maxlength="6"], ' +
     'input[name*="security"], input[id*="security"], ' +
     'input[name*="verify"], input[id*="verify"], ' +
-    'input[name*="token"], input[id*="token"]'
-  );
+    'input[name*="token"], input[id*="token"], ' +
+    'input[autocomplete*="one-time"], input[inputmode="numeric"]',
+    { timeout: 5000 }
+  ).catch(async () => {
+    // Fallback: find any newly appeared text input that wasn't on the original form
+    console.log("   ⚠️  Specific selectors failed, trying any new text input...");
+    const inputs = await page.$$('input[type="text"]:not([id="first_name"]):not([id="last_name"]):not([id="email"]):not([id="phone"]):not([id="country"])');
+    for (const inp of inputs) {
+      const visible = await inp.isVisible().catch(() => false);
+      const val = await inp.inputValue().catch(() => "x");
+      if (visible && !val) return inp;
+    }
+    return null;
+  });
 
   if (!codeInput) {
     console.log("   ❌ Code input field not found in DOM — check input dump above");
@@ -1067,18 +1079,36 @@ async function applyToGreenhouse(page, jobUrl, resumePath) {
     const codeHandled = await handleVerificationCode(page);
 
     if (codeHandled) {
-      // Re-check for confirmation after entering code
-      await page.waitForTimeout(4000);
-      const confirmed = await detectConfirmationPage(page);
-      const urlChanged = page.url() !== jobUrl;
-      if (confirmed || urlChanged) {
+      // Wait for page to fully respond after code submission
+      await page.waitForTimeout(6000);
+
+      const currentUrl = page.url();
+      const urlChanged = currentUrl !== jobUrl;
+      const confirmed  = await detectConfirmationPage(page);
+
+      // Also check for any success-like text broadly
+      const pageText = await page.evaluate(() => document.body.innerText.toLowerCase());
+      const successKeywords = [
+        "thank", "submitted", "received", "success", "bestätigt",
+        "eingereicht", "erhalten", "danke", "bewerbung", "confirmation"
+      ];
+      const textSuccess = successKeywords.some(k => pageText.includes(k));
+
+      console.log(`   📍 URL after code: ${currentUrl}`);
+      console.log(`   📄 Page snippet: ${pageText.substring(0, 300)}`);
+      console.log(`   URL changed: ${urlChanged} | DOM confirmed: ${confirmed} | Text match: ${textSuccess}`);
+
+      if (confirmed || urlChanged || textSuccess) {
         console.log("✅ Application submitted after email verification!");
         return {
           result: { success: true, reason: "Submitted after email verification code" },
           qaLog
         };
       }
-      throw new Error("Code entered but confirmation page not detected");
+
+      // Take a screenshot to see what the page looks like
+      await page.screenshot({ path: "output/screenshots/post_code_" + Date.now() + ".png", fullPage: true }).catch(() => {});
+      throw new Error("Code entered but confirmation page not detected — check post_code screenshot");
     }
 
     throw new Error(`Submission not confirmed: ${result.reason}`);
