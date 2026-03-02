@@ -804,7 +804,7 @@ async function fetchVerificationCode(timeoutMs = 90000) {
     const code = await new Promise(resolve => {
       const imap = new Imap({
         user,
-        password: cleanPass,   // always strip spaces from app password
+        password: cleanPass,
         host, port: 993,
         tls: true,
         tlsOptions: { rejectUnauthorized: false },
@@ -815,8 +815,7 @@ async function fetchVerificationCode(timeoutMs = 90000) {
         imap.openBox("INBOX", false, err => {
           if (err) { imap.end(); resolve(null); return; }
 
-          // Search ALL recent emails (not just UNSEEN — code email might be read)
-          const since = new Date(Date.now() - 5 * 60 * 1000);
+          const since = new Date(Date.now() - 15 * 60 * 1000);
           imap.search([["SINCE", since]], (err, uids) => {
             if (err || !uids || uids.length === 0) {
               console.log("   📭 No recent emails found");
@@ -825,68 +824,84 @@ async function fetchVerificationCode(timeoutMs = 90000) {
             console.log(`   📬 Found ${uids.length} recent email(s), scanning...`);
 
             const f = imap.fetch(uids, { bodies: "" });
-            let found = null;
+            
+            // Collect all parse promises — wait for ALL before resolving
+            const parsePromises = [];
 
             f.on("message", msg => {
-              msg.on("body", stream => {
-                simpleParser(stream, (err, mail) => {
-                  if (err || found) return;
-                  const from    = (mail.from?.text || "").toLowerCase();
-                  const subject = (mail.subject    || "").toLowerCase();
-                  const text    = mail.text  || "";
-                  const html    = mail.html  || "";
-                  const body    = text + " " + html;
+              const p = new Promise(done => {
+                msg.on("body", stream => {
+                  simpleParser(stream, (err, mail) => {
+                    if (err) { done(null); return; }
 
-                  console.log(`   ✉️  From: ${from.substring(0,50)} | Subject: ${subject.substring(0,50)}`);
+                    const from    = (mail.from?.text || "").toLowerCase();
+                    const subject = (mail.subject    || "").toLowerCase();
+                    const text    = mail.text  || "";
+                    const html    = mail.html  || "";
+                    const body    = text + " " + html;
 
-                  const isGreenhouse = from.includes("greenhouse") ||
-                                       subject.includes("verify")  ||
-                                       subject.includes("bestätigung") ||
-                                       subject.includes("confirm") ||
-                                       subject.includes("application") ||
-                                       subject.includes("code");
+                    console.log(`   ✉️  From: ${from.substring(0,60)} | Subject: ${subject.substring(0,60)}`);
 
-                  if (isGreenhouse) {
-                    // Strip HTML tags and normalize whitespace for clean regex matching
+                    const isGreenhouse = from.includes("greenhouse-mail.io") ||
+                                         from.includes("@greenhouse.io") ||
+                                         subject.includes("security code for your application");
+
+                    if (!isGreenhouse) { done(null); return; }
+
+                    console.log("   ✅ Greenhouse email matched — extracting code...");
+
+                    // Strip HTML completely
                     const cleanText = body
+                      .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, " ")
+                      .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, " ")
                       .replace(/<[^>]+>/g, " ")
                       .replace(/&nbsp;/g, " ")
+                      .replace(/&amp;/g, "&")
                       .replace(/&#[0-9]+;/g, " ")
                       .replace(/\s+/g, " ")
                       .trim();
 
-                    // Log snippet to help debug if extraction fails
-                    console.log("   📄 Body (stripped): " + cleanText.substring(0, 400));
+                    console.log("   📄 Body: " + cleanText.substring(0, 500));
 
-                    // Extraction patterns — most specific first
+                    // Strategy 1: digit sequence right after "code" keyword
+                    let m = cleanText.match(/(?:code|Code|CODE)\s*[:\-]?\s*([A-Za-z0-9]{6,8})/);
+                    if (m) { console.log("   🎯 Strategy 1: " + m[1]); done(m[1].toUpperCase()); return; }
+
+                    // Strategy 2: any pure-digit run of 6-8 chars (most common Greenhouse format)
+                    m = cleanText.match(/([0-9]{6,8})/);
+                    if (m) { console.log("   🎯 Strategy 2: " + m[1]); done(m[1]); return; }
+
+                    // Strategy 3: standalone alphanumeric token 6-8 chars, not a common word
                     const BLACKLIST = new Set([
-                      "UNSUBSCRIBE","GREENHOUSE","SECURITY","APPLICATION",
-                      "BROWSER","COMPANY","POSITION","CONFIRM","REGARDS"
+                      "SECURITY","GREENHOUSE","APPLICATION","UNSUBSCRIBE","BROWSER",
+                      "COMPANY","CONFIRM","REGARDS","SUBJECT","MESSAGE","ACCOUNT",
+                      "PRIVACY","CONTACT","SUPPORT","CAREERS","PLEASE","SUBMIT",
+                      "VERIFY","REVIEW","NOTICE","POLICY","RIGHTS","FOOTER","GOOGLE",
+                      "HIRING","RESUME","ATTACH","UPLOAD","BUTTON","LINKED","PORTAL",
                     ]);
+                    const tokens = cleanText.split(/\s+/);
+                    const candidate = tokens.find(t =>
+                      t.length >= 6 && t.length <= 8 &&
+                      /^[A-Z0-9]+$/.test(t.toUpperCase()) &&
+                      !BLACKLIST.has(t.toUpperCase())
+                    );
+                    if (candidate) { console.log("   🎯 Strategy 3: " + candidate); done(candidate.toUpperCase()); return; }
 
-                    // Pattern 1: explicit "code" label nearby (most reliable)
-                    let codeMatch = cleanText.match(/(?:code|Code|CODE)[^a-zA-Z0-9]*([A-Za-z0-9]{6,8})/) ||
-                                    cleanText.match(/([A-Za-z0-9]{8})/) ||
-                                    cleanText.match(/([A-Za-z0-9]{6})/) ||
-                                    cleanText.match(/([0-9]{6,8})/);
-
-                    if (codeMatch) {
-                      const candidate = (codeMatch[1] || codeMatch[0]).toUpperCase();
-                      if (candidate.length >= 6 && !BLACKLIST.has(candidate)) {
-                        console.log("   🎯 Code extracted: " + candidate);
-                        found = candidate;
-                      } else {
-                        console.log("   ⚠️  Candidate blacklisted: " + candidate);
-                      }
-                    } else {
-                      console.log("   ⚠️  No code pattern matched");
-                    }
-                  }
+                    console.log("   ⚠️  Could not extract code from Greenhouse email");
+                    done(null);
+                  });
                 });
               });
+              parsePromises.push(p);
             });
 
-            f.once("end", () => { imap.end(); resolve(found); });
+            f.once("end", async () => {
+              // Wait for ALL parse promises to complete before resolving
+              const results = await Promise.all(parsePromises);
+              const found = results.find(r => r !== null) || null;
+              imap.end();
+              resolve(found);
+            });
           });
         });
       });
@@ -894,14 +909,12 @@ async function fetchVerificationCode(timeoutMs = 90000) {
       imap.once("error", err => {
         console.log(`   ❌ IMAP error: ${err.message}`);
         if (err.message.includes("Invalid credentials")) {
-          console.log("   💡 Fix: Go to Google Account → Security → 2-Step Verification → App Passwords");
-          console.log("   💡 Create an App Password for 'Mail' and save it as IMAP_PASS secret (no spaces)");
+          console.log("   💡 Fix: Gmail App Password must be 16 chars, no spaces, stored in IMAP_PASS secret");
         }
         resolve(null);
       });
       imap.connect();
-    });
-
+    })
     if (code) return code;
     console.log("   ⏳ Retrying in 5s...");
     await new Promise(r => setTimeout(r, 5000));
